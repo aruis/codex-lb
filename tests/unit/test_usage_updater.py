@@ -99,6 +99,7 @@ class AdditionalUsageEntry:
 class StubAdditionalUsageRepository:
     def __init__(self) -> None:
         self.entries: list[AdditionalUsageEntry] = []
+        self.deleted_account_ids: list[str] = []
 
     async def add_entry(
         self,
@@ -121,6 +122,9 @@ class StubAdditionalUsageRepository:
                 window_minutes=window_minutes,
             )
         )
+
+    async def delete_for_account(self, account_id: str) -> None:
+        self.deleted_account_ids.append(account_id)
 
 
 def _make_account(account_id: str, chatgpt_account_id: str, email: str = "a@example.com") -> Account:
@@ -702,7 +706,6 @@ async def test_additional_rate_limits_null_writes_nothing(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_additional_rate_limits_empty_list_writes_nothing(monkeypatch) -> None:
-    """When additional_rate_limits is an empty list, no additional entries are written."""
     monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
     from app.core.config.settings import get_settings
 
@@ -732,6 +735,39 @@ async def test_additional_rate_limits_empty_list_writes_nothing(monkeypatch) -> 
     await updater.refresh_accounts([acc], latest_usage={})
 
     assert len(additional_repo.entries) == 0
+    assert additional_repo.deleted_account_ids == ["acc_empty"]
+
+
+@pytest.mark.asyncio
+async def test_additional_rate_limits_none_does_not_prune_existing_rows(monkeypatch) -> None:
+    monkeypatch.setenv("CODEX_LB_USAGE_REFRESH_ENABLED", "true")
+    from app.core.config.settings import get_settings
+
+    get_settings.cache_clear()
+
+    async def stub_fetch_usage(**_: Any) -> UsagePayload:
+        return UsagePayload.model_validate(
+            {
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 10.0,
+                        "reset_at": 1735689600,
+                        "limit_window_seconds": 60,
+                    },
+                },
+            }
+        )
+
+    monkeypatch.setattr("app.modules.usage.updater.fetch_usage", stub_fetch_usage)
+
+    usage_repo = StubUsageRepository()
+    additional_repo = StubAdditionalUsageRepository()
+    updater = UsageUpdater(usage_repo, accounts_repo=None, additional_usage_repo=additional_repo)
+    acc = _make_account("acc_none_preserve", "workspace_none_preserve", email="preserve@example.com")
+
+    await updater.refresh_accounts([acc], latest_usage={})
+
+    assert additional_repo.deleted_account_ids == []
 
 
 @pytest.mark.asyncio

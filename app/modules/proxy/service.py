@@ -12,7 +12,7 @@ import anyio
 
 from app.core import usage as usage_core
 from app.core.auth.refresh import RefreshError
-from app.core.balancer import PERMANENT_FAILURE_CODES
+from app.core.balancer import PERMANENT_FAILURE_CODES, RoutingStrategy
 from app.core.balancer.types import UpstreamError
 from app.core.clients.proxy import ProxyResponseError, filter_inbound_headers
 from app.core.clients.proxy import compact_responses as core_compact_responses
@@ -109,7 +109,7 @@ class ProxyService:
         settings = await get_settings_cache().get()
         prefer_earlier_reset = settings.prefer_earlier_reset_accounts
         sticky_threads_enabled = settings.sticky_threads_enabled
-        routing_strategy = getattr(settings, "routing_strategy", "usage_weighted")
+        routing_strategy = _routing_strategy(settings)
         sticky_key, reallocate_sticky = _sticky_key_for_compact_request(
             payload,
             headers,
@@ -199,7 +199,7 @@ class ProxyService:
         filtered = filter_inbound_headers(headers)
         settings = await get_settings_cache().get()
         prefer_earlier_reset = settings.prefer_earlier_reset_accounts
-        routing_strategy = getattr(settings, "routing_strategy", "usage_weighted")
+        routing_strategy = _routing_strategy(settings)
         selection = await self._load_balancer.select_account(
             prefer_earlier_reset_accounts=prefer_earlier_reset,
             routing_strategy=routing_strategy,
@@ -428,7 +428,7 @@ class ProxyService:
         settings = await get_settings_cache().get()
         prefer_earlier_reset = settings.prefer_earlier_reset_accounts
         sticky_threads_enabled = settings.sticky_threads_enabled
-        routing_strategy = getattr(settings, "routing_strategy", "usage_weighted")
+        routing_strategy = _routing_strategy(settings)
         sticky_key = _sticky_key_for_responses_request(
             payload,
             headers,
@@ -805,58 +805,62 @@ class ProxyService:
                 account_id: entry for account_id, entry in latest_secondary.items() if account_id in account_map
             }
 
-            if not filtered_entries:
+            if not filtered_entries and not filtered_secondary:
                 continue
 
-            # Get metered_feature from first entry (same for all accounts)
-            first_entry = next(iter(filtered_entries.values()))
+            first_entry = (
+                next(iter(filtered_entries.values())) if filtered_entries else next(iter(filtered_secondary.values()))
+            )
             metered_feature = first_entry.metered_feature
 
-            # Aggregate used_percent across accounts (average)
-            used_percents = [
-                entry.used_percent for entry in filtered_entries.values() if entry.used_percent is not None
-            ]
-            if not used_percents:
-                avg_used_percent = None
-            else:
-                avg_used_percent = sum(used_percents) / len(used_percents)
+            window_snapshot = None
+            avg_used_percent = None
+            if filtered_entries:
+                used_percents = [
+                    entry.used_percent for entry in filtered_entries.values() if entry.used_percent is not None
+                ]
+                if used_percents:
+                    avg_used_percent = sum(used_percents) / len(used_percents)
+                    primary_entry = next(iter(filtered_entries.values()))
+                    window_minutes = primary_entry.window_minutes or 300
+                    limit_window_seconds = int(window_minutes * 60)
+                    reset_at = primary_entry.reset_at or 0
+                    reset_after_seconds = max(0, int(reset_at) - now_epoch)
 
-            # Build rate limit details if we have data
+                    window_snapshot = RateLimitWindowSnapshotData(
+                        used_percent=int(max(0.0, min(100.0, avg_used_percent))),
+                        limit_window_seconds=limit_window_seconds,
+                        reset_after_seconds=reset_after_seconds,
+                        reset_at=int(reset_at),
+                    )
+
+            secondary_window_snapshot = None
+            if filtered_secondary:
+                sec_used_percents = [e.used_percent for e in filtered_secondary.values() if e.used_percent is not None]
+                if sec_used_percents:
+                    sec_avg = sum(sec_used_percents) / len(sec_used_percents)
+                    sec_first = next(iter(filtered_secondary.values()))
+                    sec_window_minutes = sec_first.window_minutes or 300
+                    sec_limit_window_seconds = int(sec_window_minutes * 60)
+                    sec_reset_at = sec_first.reset_at or 0
+                    sec_reset_after_seconds = max(0, int(sec_reset_at) - now_epoch)
+                    secondary_window_snapshot = RateLimitWindowSnapshotData(
+                        used_percent=int(max(0.0, min(100.0, sec_avg))),
+                        limit_window_seconds=sec_limit_window_seconds,
+                        reset_after_seconds=sec_reset_after_seconds,
+                        reset_at=int(sec_reset_at),
+                    )
+
             rate_limit_details = None
-            if avg_used_percent is not None:
-                # Get window info from first entry
-                window_minutes = first_entry.window_minutes or 300  # default to 5 minutes
-                limit_window_seconds = int(window_minutes * 60)
-                reset_at = first_entry.reset_at or 0
-                reset_after_seconds = max(0, int(reset_at) - now_epoch)
-
-                window_snapshot = RateLimitWindowSnapshotData(
-                    used_percent=int(max(0.0, min(100.0, avg_used_percent))),
-                    limit_window_seconds=limit_window_seconds,
-                    reset_after_seconds=reset_after_seconds,
-                    reset_at=int(reset_at),
+            if avg_used_percent is not None or secondary_window_snapshot is not None:
+                primary_pct = int(max(0.0, min(100.0, avg_used_percent))) if avg_used_percent is not None else 0
+                primary_exhausted = avg_used_percent is not None and primary_pct >= 100
+                secondary_exhausted = (
+                    secondary_window_snapshot is not None and secondary_window_snapshot.used_percent >= 100
                 )
-                secondary_window_snapshot = None
-                if filtered_secondary:
-                    sec_used_percents = [
-                        e.used_percent for e in filtered_secondary.values() if e.used_percent is not None
-                    ]
-                    if sec_used_percents:
-                        sec_avg = sum(sec_used_percents) / len(sec_used_percents)
-                        sec_first = next(iter(filtered_secondary.values()))
-                        sec_window_minutes = sec_first.window_minutes or 300
-                        sec_limit_window_seconds = int(sec_window_minutes * 60)
-                        sec_reset_at = sec_first.reset_at or 0
-                        sec_reset_after_seconds = max(0, int(sec_reset_at) - now_epoch)
-                        secondary_window_snapshot = RateLimitWindowSnapshotData(
-                            used_percent=int(max(0.0, min(100.0, sec_avg))),
-                            limit_window_seconds=sec_limit_window_seconds,
-                            reset_after_seconds=sec_reset_after_seconds,
-                            reset_at=int(sec_reset_at),
-                        )
                 rate_limit_details = RateLimitStatusDetailsData(
-                    allowed=int(max(0.0, min(100.0, avg_used_percent))) < 100,
-                    limit_reached=int(max(0.0, min(100.0, avg_used_percent))) >= 100,
+                    allowed=not primary_exhausted and not secondary_exhausted,
+                    limit_reached=primary_exhausted or secondary_exhausted,
                     primary_window=window_snapshot,
                     secondary_window=secondary_window_snapshot,
                 )
@@ -925,6 +929,11 @@ def _event_type_from_payload(event: OpenAIEvent | None, payload: dict[str, JsonV
     if isinstance(payload_type, str):
         return payload_type
     return None
+
+
+def _routing_strategy(settings: object) -> RoutingStrategy:
+    value = getattr(settings, "routing_strategy", "usage_weighted")
+    return "round_robin" if value == "round_robin" else "usage_weighted"
 
 
 def _should_suppress_text_done_event(

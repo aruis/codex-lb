@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.models import AdditionalUsageHistory, Base
 from app.modules.usage.repository import AdditionalUsageRepository
@@ -13,15 +14,17 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-async def async_session():
-    """Create an in-memory SQLite session for testing."""
+async def async_session() -> AsyncIterator[AsyncSession]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async_session_factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)  # type: ignore[arg-type]
-    async with async_session_factory() as session:
+    async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    session = async_session_factory()
+    try:
         yield session
+    finally:
+        await session.close()
 
     await engine.dispose()
 
@@ -40,9 +43,6 @@ async def test_add_entry(async_session: AsyncSession) -> None:
         reset_at=1735689600,
         window_minutes=1,
     )
-
-    # Verify entry was added
-    from sqlalchemy import select
 
     stmt = select(AdditionalUsageHistory).where(AdditionalUsageHistory.account_id == "acc_1")
     result = await async_session.execute(stmt)
@@ -460,3 +460,41 @@ async def test_history_since_empty_when_no_data(async_session: AsyncSession) -> 
     )
 
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_delete_for_account_removes_all_rows(async_session: AsyncSession) -> None:
+    repo = AdditionalUsageRepository(async_session)
+    now = datetime.now(tz=timezone.utc)
+
+    await repo.add_entry(
+        account_id="acc_delete",
+        limit_name="requests_per_minute",
+        metered_feature="api_calls",
+        window="1m",
+        used_percent=30.0,
+        recorded_at=now,
+    )
+    await repo.add_entry(
+        account_id="acc_delete",
+        limit_name="requests_per_hour",
+        metered_feature="api_calls",
+        window="1h",
+        used_percent=60.0,
+        recorded_at=now,
+    )
+    await repo.add_entry(
+        account_id="acc_keep",
+        limit_name="requests_per_minute",
+        metered_feature="api_calls",
+        window="1m",
+        used_percent=45.0,
+        recorded_at=now,
+    )
+
+    await repo.delete_for_account("acc_delete")
+
+    result = await async_session.execute(select(AdditionalUsageHistory).order_by(AdditionalUsageHistory.account_id))
+    entries = result.scalars().all()
+    assert len(entries) == 1
+    assert entries[0].account_id == "acc_keep"

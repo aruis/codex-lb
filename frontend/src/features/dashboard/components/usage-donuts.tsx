@@ -46,7 +46,6 @@ export function UsageDonuts({
         subtitle={`Window ${formatWindowLabel("secondary", secondaryWindowMinutes)}`}
         items={secondaryChartItems}
         total={secondaryTotal}
-        safeLine={safeLine}
       />
     </div>
   );

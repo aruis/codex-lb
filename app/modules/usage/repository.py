@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from datetime import datetime
 
-from sqlalchemy import Integer, cast, func, literal_column, select
+from sqlalchemy import Integer, cast, delete, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.usage.types import UsageAggregateRow, UsageTrendBucket
@@ -200,6 +200,11 @@ class AdditionalUsageRepository:
             recorded_at=recorded_at or utcnow(),
         )
         self._session.add(entry)
+        await self._session.commit()
+
+    async def delete_for_account(self, account_id: str) -> None:
+        stmt = delete(AdditionalUsageHistory).where(AdditionalUsageHistory.account_id == account_id)
+        await self._session.execute(stmt)
         await self._session.commit()
 
     async def latest_by_account(

@@ -49,6 +49,8 @@ class AdditionalUsageRepositoryPort(Protocol):
         window_minutes: int | None = None,
     ) -> None: ...
 
+    async def delete_for_account(self, account_id: str) -> None: ...
+
 
 @dataclass(frozen=True, slots=True)
 class AccountRefreshResult:
@@ -183,33 +185,35 @@ class UsageUpdater:
             )
             usage_written = usage_written or _usage_entry_written(entry)
 
-        # Write additional rate limits
-        if self._additional_usage_repo and payload.additional_rate_limits:
-            for additional in payload.additional_rate_limits:
-                if additional.rate_limit is None:
-                    continue
-                add_primary = additional.rate_limit.primary_window
-                add_secondary = additional.rate_limit.secondary_window
-                if add_primary and add_primary.used_percent is not None:
-                    await self._additional_usage_repo.add_entry(
-                        account_id=account.id,
-                        limit_name=additional.limit_name,
-                        metered_feature=additional.metered_feature,
-                        window="primary",
-                        used_percent=float(add_primary.used_percent),
-                        reset_at=_reset_at(add_primary.reset_at, add_primary.reset_after_seconds, now_epoch),
-                        window_minutes=_window_minutes(add_primary.limit_window_seconds),
-                    )
-                if add_secondary and add_secondary.used_percent is not None:
-                    await self._additional_usage_repo.add_entry(
-                        account_id=account.id,
-                        limit_name=additional.limit_name,
-                        metered_feature=additional.metered_feature,
-                        window="secondary",
-                        used_percent=float(add_secondary.used_percent),
-                        reset_at=_reset_at(add_secondary.reset_at, add_secondary.reset_after_seconds, now_epoch),
-                        window_minutes=_window_minutes(add_secondary.limit_window_seconds),
-                    )
+        if self._additional_usage_repo is not None:
+            if payload.additional_rate_limits:
+                for additional in payload.additional_rate_limits:
+                    if additional.rate_limit is None:
+                        continue
+                    add_primary = additional.rate_limit.primary_window
+                    add_secondary = additional.rate_limit.secondary_window
+                    if add_primary and add_primary.used_percent is not None:
+                        await self._additional_usage_repo.add_entry(
+                            account_id=account.id,
+                            limit_name=additional.limit_name,
+                            metered_feature=additional.metered_feature,
+                            window="primary",
+                            used_percent=float(add_primary.used_percent),
+                            reset_at=_reset_at(add_primary.reset_at, add_primary.reset_after_seconds, now_epoch),
+                            window_minutes=_window_minutes(add_primary.limit_window_seconds),
+                        )
+                    if add_secondary and add_secondary.used_percent is not None:
+                        await self._additional_usage_repo.add_entry(
+                            account_id=account.id,
+                            limit_name=additional.limit_name,
+                            metered_feature=additional.metered_feature,
+                            window="secondary",
+                            used_percent=float(add_secondary.used_percent),
+                            reset_at=_reset_at(add_secondary.reset_at, add_secondary.reset_after_seconds, now_epoch),
+                            window_minutes=_window_minutes(add_secondary.limit_window_seconds),
+                        )
+            elif payload.additional_rate_limits is not None:
+                await self._additional_usage_repo.delete_for_account(account.id)
 
         return AccountRefreshResult(usage_written=usage_written)
 
