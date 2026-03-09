@@ -101,7 +101,8 @@ def get_accounts_context(
 ) -> AccountsContext:
     repository = AccountsRepository(session)
     usage_repository = UsageRepository(session)
-    service = AccountsService(repository, usage_repository)
+    additional_usage_repository = AdditionalUsageRepository(session)
+    service = AccountsService(repository, usage_repository, additional_usage_repository)
     return AccountsContext(
         session=session,
         repository=repository,

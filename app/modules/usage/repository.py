@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 
 from sqlalchemy import Integer, cast, func, literal_column, select
@@ -231,9 +232,17 @@ class AdditionalUsageRepository:
         result = await self._session.execute(stmt)
         return {entry.account_id: entry for entry in result.scalars().all()}
 
-    async def list_limit_names(self) -> list[str]:
-        """Returns distinct limit_names in the DB."""
+    async def list_limit_names(
+        self,
+        *,
+        account_ids: Collection[str] | None = None,
+        since: datetime | None = None,
+    ) -> list[str]:
         stmt = select(AdditionalUsageHistory.limit_name).distinct()
+        if account_ids is not None:
+            stmt = stmt.where(AdditionalUsageHistory.account_id.in_(account_ids))
+        if since is not None:
+            stmt = stmt.where(AdditionalUsageHistory.recorded_at >= since)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 

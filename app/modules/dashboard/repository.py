@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,8 +38,13 @@ class DashboardRepository:
     ) -> list[BucketModelAggregate]:
         return await self._logs_repo.aggregate_by_bucket(since, bucket_seconds)
 
-    async def list_additional_limit_names(self) -> list[str]:
-        return await self._additional_usage_repo.list_limit_names()
+    async def list_additional_limit_names(
+        self,
+        *,
+        account_ids: Collection[str] | None = None,
+        since: datetime | None = None,
+    ) -> list[str]:
+        return await self._additional_usage_repo.list_limit_names(account_ids=account_ids, since=since)
 
     async def latest_additional_usage_by_account(
         self, limit_name: str, window: str

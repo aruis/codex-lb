@@ -739,7 +739,7 @@ class ProxyService:
 
     async def _refresh_usage(self, repos: ProxyRepositories, accounts: list[Account]) -> None:
         latest_usage = await repos.usage.latest_by_account(window="primary")
-        updater = UsageUpdater(repos.usage, repos.accounts)
+        updater = UsageUpdater(repos.usage, repos.accounts, repos.additional_usage)
         await updater.refresh_accounts(accounts, latest_usage)
 
     async def _latest_usage_rows(
@@ -783,7 +783,7 @@ class ProxyService:
         if not account_map:
             return []
 
-        limit_names = await repos.additional_usage.list_limit_names()
+        limit_names = await repos.additional_usage.list_limit_names(account_ids=list(account_map.keys()))
         additional_limits = []
 
         for limit_name in limit_names:
@@ -792,10 +792,17 @@ class ProxyService:
                 limit_name=limit_name,
                 window="primary",
             )
+            latest_secondary = await repos.additional_usage.latest_by_account(
+                limit_name=limit_name,
+                window="secondary",
+            )
 
             # Filter to selected accounts
             filtered_entries = {
                 account_id: entry for account_id, entry in latest_entries.items() if account_id in account_map
+            }
+            filtered_secondary = {
+                account_id: entry for account_id, entry in latest_secondary.items() if account_id in account_map
             }
 
             if not filtered_entries:
@@ -829,11 +836,29 @@ class ProxyService:
                     reset_after_seconds=reset_after_seconds,
                     reset_at=int(reset_at),
                 )
+                secondary_window_snapshot = None
+                if filtered_secondary:
+                    sec_used_percents = [
+                        e.used_percent for e in filtered_secondary.values() if e.used_percent is not None
+                    ]
+                    if sec_used_percents:
+                        sec_avg = sum(sec_used_percents) / len(sec_used_percents)
+                        sec_first = next(iter(filtered_secondary.values()))
+                        sec_window_minutes = sec_first.window_minutes or 300
+                        sec_limit_window_seconds = int(sec_window_minutes * 60)
+                        sec_reset_at = sec_first.reset_at or 0
+                        sec_reset_after_seconds = max(0, int(sec_reset_at) - now_epoch)
+                        secondary_window_snapshot = RateLimitWindowSnapshotData(
+                            used_percent=int(max(0.0, min(100.0, sec_avg))),
+                            limit_window_seconds=sec_limit_window_seconds,
+                            reset_after_seconds=sec_reset_after_seconds,
+                            reset_at=int(sec_reset_at),
+                        )
                 rate_limit_details = RateLimitStatusDetailsData(
                     allowed=int(max(0.0, min(100.0, avg_used_percent))) < 100,
                     limit_reached=int(max(0.0, min(100.0, avg_used_percent))) >= 100,
                     primary_window=window_snapshot,
-                    secondary_window=None,
+                    secondary_window=secondary_window_snapshot,
                 )
 
             additional_limits.append(

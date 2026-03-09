@@ -54,12 +54,17 @@ def compute_depletion_for_account(
     - Returns None if insufficient data (<2 data points) or rate is unknown
     - Uses module-level _ewma_states for in-memory state
     """
-    if len(history) < 2:
+    if not history:
         return None
 
     now = now or utcnow()
     key = (account_id, limit_name, window)
     state = _ewma_states.get(key)
+
+    if len(history) < 2 and state is None:
+        entry = history[0]
+        _ewma_states[key] = ewma_update(None, entry.used_percent, entry.recorded_at.timestamp())
+        return None
 
     for entry in history:
         ts = entry.recorded_at.timestamp()
