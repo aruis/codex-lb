@@ -92,10 +92,13 @@ class DashboardService:
         additional_quotas = await self._build_additional_quotas()
 
         # Compute depletion from primary usage history.
-        # Use each account's own window_minutes for lookback so weekly-only accounts
-        # (7-day window) don't get truncated by the aggregate primary_window_minutes.
+        # Only include accounts that survived normalization (weekly-only accounts
+        # are remapped to secondary and excluded from primary depletion).
+        normalized_primary_ids = {row.account_id for row in primary_rows}
         primary_history: dict[str, list[UsageHistory]] = {}
         for account_id, usage_entry in primary_usage.items():
+            if account_id not in normalized_primary_ids:
+                continue
             acct_window = usage_entry.window_minutes if usage_entry.window_minutes else 60
             acct_since = now - timedelta(minutes=acct_window)
             rows = await self._repo.usage_history_since(account_id, "primary", acct_since)
