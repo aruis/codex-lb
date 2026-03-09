@@ -37,6 +37,19 @@ class UsageRepositoryPort(Protocol):
     ) -> UsageHistory | None: ...
 
 
+class AdditionalUsageRepositoryPort(Protocol):
+    async def add_entry(
+        self,
+        account_id: str,
+        limit_name: str,
+        metered_feature: str,
+        window: str,
+        used_percent: float,
+        reset_at: int | None = None,
+        window_minutes: int | None = None,
+    ) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class AccountRefreshResult:
     usage_written: bool
@@ -47,8 +60,10 @@ class UsageUpdater:
         self,
         usage_repo: UsageRepositoryPort,
         accounts_repo: AccountsRepositoryPort | None = None,
+        additional_usage_repo: AdditionalUsageRepositoryPort | None = None,
     ) -> None:
         self._usage_repo = usage_repo
+        self._additional_usage_repo = additional_usage_repo
         self._encryptor = TokenEncryptor()
         self._auth_manager = AuthManager(accounts_repo) if accounts_repo else None
 
@@ -167,6 +182,34 @@ class UsageUpdater:
                 window_minutes=_window_minutes(secondary.limit_window_seconds),
             )
             usage_written = usage_written or _usage_entry_written(entry)
+
+        # Write additional rate limits
+        if self._additional_usage_repo and payload.additional_rate_limits:
+            for additional in payload.additional_rate_limits:
+                if additional.rate_limit is None:
+                    continue
+                add_primary = additional.rate_limit.primary_window
+                add_secondary = additional.rate_limit.secondary_window
+                if add_primary and add_primary.used_percent is not None:
+                    await self._additional_usage_repo.add_entry(
+                        account_id=account.id,
+                        limit_name=additional.limit_name,
+                        metered_feature=additional.metered_feature,
+                        window="primary",
+                        used_percent=float(add_primary.used_percent),
+                        reset_at=_reset_at(add_primary.reset_at, add_primary.reset_after_seconds, now_epoch),
+                        window_minutes=_window_minutes(add_primary.limit_window_seconds),
+                    )
+                if add_secondary and add_secondary.used_percent is not None:
+                    await self._additional_usage_repo.add_entry(
+                        account_id=account.id,
+                        limit_name=additional.limit_name,
+                        metered_feature=additional.metered_feature,
+                        window="secondary",
+                        used_percent=float(add_secondary.used_percent),
+                        reset_at=_reset_at(add_secondary.reset_at, add_secondary.reset_after_seconds, now_epoch),
+                        window_minutes=_window_minutes(add_secondary.limit_window_seconds),
+                    )
 
         return AccountRefreshResult(usage_written=usage_written)
 
