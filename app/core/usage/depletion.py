@@ -14,6 +14,7 @@ class EWMAState:
     rate: float | None
     last_used_percent: float
     last_timestamp: float
+    last_reset_at: int | None = None
 
 
 def ewma_update(
@@ -21,27 +22,29 @@ def ewma_update(
     used_percent: float,
     timestamp: float,
     alpha: float = DEFAULT_ALPHA,
+    reset_at: int | None = None,
 ) -> EWMAState:
     if state is None:
         return EWMAState(
             rate=None,
             last_used_percent=used_percent,
             last_timestamp=timestamp,
+            last_reset_at=reset_at,
         )
 
     dt = timestamp - state.last_timestamp
     if dt == 0:
         return state
 
+    window_changed = reset_at is not None and state.last_reset_at is not None and reset_at != state.last_reset_at
+
     drop = state.last_used_percent - used_percent
-    if drop > 0:
-        # Any decrease in used_percent indicates a window reset (or partial
-        # reset). Clear the EWMA rate so post-reset burn starts from zero
-        # rather than carrying over stale momentum.
+    if drop > 0 or window_changed:
         return EWMAState(
             rate=None,
             last_used_percent=used_percent,
             last_timestamp=timestamp,
+            last_reset_at=reset_at,
         )
 
     delta_percent = used_percent - state.last_used_percent
@@ -52,6 +55,7 @@ def ewma_update(
         rate=rate,
         last_used_percent=used_percent,
         last_timestamp=timestamp,
+        last_reset_at=reset_at,
     )
 
 

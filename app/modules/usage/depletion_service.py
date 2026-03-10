@@ -63,7 +63,9 @@ def compute_depletion_for_account(
 
     if len(history) < 2 and state is None:
         entry = history[0]
-        _ewma_states[key] = ewma_update(None, entry.used_percent, naive_utc_to_epoch(entry.recorded_at))
+        _ewma_states[key] = ewma_update(
+            None, entry.used_percent, naive_utc_to_epoch(entry.recorded_at), reset_at=entry.reset_at
+        )
         return None
 
     # Filter out entries already processed by persistent EWMA state to prevent
@@ -76,7 +78,7 @@ def compute_depletion_for_account(
 
     for entry in new_entries:
         ts = naive_utc_to_epoch(entry.recorded_at)
-        state = ewma_update(state, entry.used_percent, ts)
+        state = ewma_update(state, entry.used_percent, ts, reset_at=entry.reset_at)
 
     if state is not None:
         _ewma_states[key] = state
@@ -87,15 +89,15 @@ def compute_depletion_for_account(
     latest = history[-1]
     used_percent = latest.used_percent
 
-    # Compute seconds until reset
     seconds_until_reset = 0.0
     if latest.reset_at is not None:
         seconds_until_reset = max(0.0, latest.reset_at - naive_utc_to_epoch(now))
     elif latest.window_minutes is not None:
-        window_seconds = latest.window_minutes * 60
-        first = history[0]
-        elapsed = (now - first.recorded_at).total_seconds()
-        seconds_until_reset = max(0.0, window_seconds - elapsed)
+        # Without reset_at we cannot know when the window started.  Use
+        # the full window duration as a conservative upper bound rather
+        # than guessing from the first observed sample (which may appear
+        # mid-window and dramatically underestimate remaining time).
+        seconds_until_reset = float(latest.window_minutes * 60)
 
     total_window_seconds = (latest.window_minutes * 60) if latest.window_minutes else 0.0
     seconds_elapsed = max(0.0, total_window_seconds - seconds_until_reset)
