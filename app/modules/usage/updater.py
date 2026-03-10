@@ -69,8 +69,8 @@ class AccountRefreshResult:
 
 
 # Module-level freshness cache for additional-only accounts (no main UsageHistory
-# entry). Updated only after a full successful refresh, so partial writes
-# (additional succeeded but main failed) do not suppress retries.
+# entry). Used as a fast path to avoid DB queries on every pass within the same
+# process. Updated only after a successful refresh that wrote data.
 _last_successful_refresh: dict[str, datetime] = {}
 
 
@@ -106,13 +106,19 @@ class UsageUpdater:
             if latest and (now - latest.recorded_at).total_seconds() < interval:
                 continue
             # Additional-only accounts have no main UsageHistory entry.
-            # Use the process-local success cache instead of DB timestamps
-            # so that partial writes (additional succeeded, main failed)
-            # do not suppress retries.
+            # Check DB-backed freshness (works across workers/restarts)
+            # with process-local cache as a fast path.
             if latest is None:
                 last_ok = _last_successful_refresh.get(account.id)
                 if last_ok and (now - last_ok).total_seconds() < interval:
                     continue
+                if self._additional_usage_repo is not None:
+                    additional_fresh_at = await self._additional_usage_repo.latest_recorded_at_for_account(
+                        account.id,
+                    )
+                    if additional_fresh_at and (now - additional_fresh_at).total_seconds() < interval:
+                        _last_successful_refresh[account.id] = additional_fresh_at
+                        continue
             # NOTE: AsyncSession is not safe for concurrent use. Run sequentially
             # within the request-scoped session to avoid PK collisions and
             # flush-time warnings (SAWarning: Session.add during flush).
@@ -230,11 +236,12 @@ class UsageUpdater:
                 await self._additional_usage_repo.delete_for_account(account.id)
 
         rate_limit = payload.rate_limit
-        if rate_limit is None:
-            # Additional-only accounts still wrote data above; mark fresh to
-            # prevent the scheduler/load-balancer from re-polling immediately.
-            # Mark fresh when additional_rate_limits was present (even if empty),
-            # so explicit empty lists don't cause tight re-polling (R8-F3).
+        # Treat both None and empty rate_limit (both windows absent) as
+        # additional-only to avoid falling through to window processing.
+        has_windows = rate_limit is not None and (
+            rate_limit.primary_window is not None or rate_limit.secondary_window is not None
+        )
+        if not has_windows:
             additional_synced = self._additional_usage_repo is not None and payload.additional_rate_limits is not None
             return AccountRefreshResult(usage_written=additional_synced)
 
