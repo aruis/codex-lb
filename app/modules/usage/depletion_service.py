@@ -68,11 +68,18 @@ def compute_depletion_for_account(
         )
         return None
 
-    # Filter out entries already processed by persistent EWMA state to prevent
-    # replay drift on repeated dashboard polls.
     if state is not None:
         cutoff = state.last_timestamp
         new_entries = [e for e in history if naive_utc_to_epoch(e.recorded_at) > cutoff]
+        if not new_entries and len(history) < 2:
+            # Previous samples aged out of the rolling window leaving only
+            # one point.  Clear stale EWMA rate so we don't report depletion
+            # from data that is no longer in-window.
+            entry = history[0]
+            _ewma_states[key] = ewma_update(
+                None, entry.used_percent, naive_utc_to_epoch(entry.recorded_at), reset_at=entry.reset_at
+            )
+            return None
     else:
         new_entries = history
 

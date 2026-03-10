@@ -117,14 +117,19 @@ class DashboardService:
                     if sec_rows:
                         secondary_history[account_id] = sec_rows
             elif account_id in primary_usage:
-                # Weekly-only: history is stored under window="primary" even
-                # though normalization remapped the latest row to secondary.
+                # Weekly-only: newer samples stored as window="primary", older
+                # ones may be under "secondary".  Merge both for full series.
                 sec_entry = secondary_usage.get(account_id)
                 acct_window = sec_entry.window_minutes if sec_entry and sec_entry.window_minutes else 10080
                 acct_since = now - timedelta(minutes=acct_window)
-                rows = await self._repo.usage_history_since(account_id, "primary", acct_since)
-                if rows:
-                    secondary_history[account_id] = rows
+                pri_rows = await self._repo.usage_history_since(account_id, "primary", acct_since)
+                sec_rows = await self._repo.usage_history_since(account_id, "secondary", acct_since)
+                merged = sorted(
+                    (pri_rows or []) + (sec_rows or []),
+                    key=lambda r: r.recorded_at,
+                )
+                if merged:
+                    secondary_history[account_id] = merged
             else:
                 sec_entry = secondary_usage[account_id]
                 acct_window = sec_entry.window_minutes if sec_entry.window_minutes else 10080
