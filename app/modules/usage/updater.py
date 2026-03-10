@@ -111,6 +111,10 @@ class UsageUpdater:
             # Additional-only accounts have no main UsageHistory entry.
             # Check DB-backed freshness (works across workers/restarts)
             # with process-local cache as a fast path.
+            # NOTE: When a successful fetch returns empty additional data
+            # (all rows deleted), the DB has no timestamp to consult.
+            # Cross-worker may re-fetch; process-local cache (line ~138)
+            # prevents redundant calls within the same worker.
             if latest is None:
                 last_ok = _last_successful_refresh.get(account.id)
                 if last_ok and (now - last_ok).total_seconds() < interval:

@@ -1021,14 +1021,20 @@ class ProxyService:
 
             rate_limit_details = None
             if avg_used_percent is not None or secondary_window_snapshot is not None:
-                primary_pct = int(max(0.0, min(100.0, avg_used_percent))) if avg_used_percent is not None else 0
-                primary_exhausted = avg_used_percent is not None and primary_pct >= 100
-                secondary_exhausted = (
-                    secondary_window_snapshot is not None and secondary_window_snapshot.used_percent >= 100
-                )
+                # Per-account availability: an account is available when
+                # neither its primary nor secondary window is exhausted.
+                # Pool is allowed when at least one account can serve.
+                all_account_ids = set(filtered_entries.keys()) | set(filtered_secondary.keys())
+                any_available = False
+                for aid in all_account_ids:
+                    pri_pct = filtered_entries[aid].used_percent if aid in filtered_entries else 0.0
+                    sec_pct = filtered_secondary[aid].used_percent if aid in filtered_secondary else 0.0
+                    if pri_pct < 100.0 and sec_pct < 100.0:
+                        any_available = True
+                        break
                 rate_limit_details = RateLimitStatusDetailsData(
-                    allowed=not primary_exhausted and not secondary_exhausted,
-                    limit_reached=primary_exhausted or secondary_exhausted,
+                    allowed=any_available,
+                    limit_reached=not any_available,
                     primary_window=window_snapshot,
                     secondary_window=secondary_window_snapshot,
                 )
