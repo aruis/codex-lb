@@ -8,9 +8,9 @@ from app.core.types import JsonValue
 @dataclass(frozen=True)
 class RateLimitWindowSnapshotData:
     used_percent: int
-    limit_window_seconds: int
-    reset_after_seconds: int
-    reset_at: int
+    limit_window_seconds: int | None = None
+    reset_after_seconds: int | None = None
+    reset_at: int | None = None
 
 
 @dataclass(frozen=True)

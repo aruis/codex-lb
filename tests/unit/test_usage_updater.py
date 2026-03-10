@@ -10,9 +10,17 @@ from app.core.auth.refresh import RefreshError
 from app.core.crypto import TokenEncryptor
 from app.core.usage.models import UsagePayload
 from app.db.models import Account, AccountStatus, UsageHistory
-from app.modules.usage.updater import UsageUpdater
+from app.modules.usage.updater import UsageUpdater, _last_successful_refresh
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _clear_refresh_cache():
+    """Clear the module-level freshness cache between tests."""
+    _last_successful_refresh.clear()
+    yield
+    _last_successful_refresh.clear()
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,9 +16,9 @@ class RateLimitWindowSnapshot(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     used_percent: int
-    limit_window_seconds: int
-    reset_after_seconds: int
-    reset_at: int
+    limit_window_seconds: int | None = None
+    reset_after_seconds: int | None = None
+    reset_at: int | None = None
 
     @classmethod
     def from_data(cls, data: RateLimitWindowSnapshotData) -> "RateLimitWindowSnapshot":

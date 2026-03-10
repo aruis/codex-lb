@@ -69,7 +69,9 @@ class AccountRefreshResult:
 
 
 # Module-level freshness cache for additional-only accounts (no main UsageHistory
-# entry). Persists across UsageUpdater instances within the same process.
+# entry). Updated only after a full successful refresh, so partial writes
+# (additional succeeded but main failed) do not suppress retries.
+_last_successful_refresh: dict[str, datetime] = {}
 
 
 class UsageUpdater:
@@ -103,15 +105,13 @@ class UsageUpdater:
             latest = latest_usage.get(account.id)
             if latest and (now - latest.recorded_at).total_seconds() < interval:
                 continue
-            # Additional-only accounts have no main usage entry; check DB.
-            # Only use this as a skip signal when the account truly has no
-            # main entry — otherwise a partial write (additional succeeded,
-            # main failed) would suppress the retry for the full interval.
-            if latest is None and self._additional_usage_repo is not None:
-                additional_fresh_at = await self._additional_usage_repo.latest_recorded_at_for_account(
-                    account.id,
-                )
-                if additional_fresh_at and (now - additional_fresh_at).total_seconds() < interval:
+            # Additional-only accounts have no main UsageHistory entry.
+            # Use the process-local success cache instead of DB timestamps
+            # so that partial writes (additional succeeded, main failed)
+            # do not suppress retries.
+            if latest is None:
+                last_ok = _last_successful_refresh.get(account.id)
+                if last_ok and (now - last_ok).total_seconds() < interval:
                     continue
             # NOTE: AsyncSession is not safe for concurrent use. Run sequentially
             # within the request-scoped session to avoid PK collisions and
@@ -122,6 +122,7 @@ class UsageUpdater:
                     usage_account_id=account.chatgpt_account_id,
                 )
                 refreshed = refreshed or result.usage_written
+                _last_successful_refresh[account.id] = now
             except Exception as exc:
                 logger.warning(
                     "Usage refresh failed account_id=%s request_id=%s error=%s",
