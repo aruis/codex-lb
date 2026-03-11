@@ -73,7 +73,7 @@ def upgrade() -> None:
                         _sticky_session_kind_enum(),
                         nullable=False,
                         server_default=sa.text("'sticky_thread'"),
-                        )
+                    )
                 )
         if bind.dialect.name == "postgresql":
             op.execute(sa.text("UPDATE sticky_sessions SET kind = 'sticky_thread' WHERE kind IS NULL"))
@@ -81,12 +81,7 @@ def upgrade() -> None:
             op.execute(sa.text("UPDATE sticky_sessions SET kind = 'sticky_thread' WHERE kind IS NULL OR kind = ''"))
         sticky_indexes = _indexes(bind, "sticky_sessions")
         if "idx_sticky_kind_updated_at" not in sticky_indexes:
-            op.execute(
-                sa.text(
-                    "CREATE INDEX idx_sticky_kind_updated_at "
-                    "ON sticky_sessions (kind, updated_at DESC)"
-                )
-            )
+            op.execute(sa.text("CREATE INDEX idx_sticky_kind_updated_at ON sticky_sessions (kind, updated_at DESC)"))
 
     if _table_exists(bind, "dashboard_settings"):
         dashboard_columns = _columns(bind, "dashboard_settings")

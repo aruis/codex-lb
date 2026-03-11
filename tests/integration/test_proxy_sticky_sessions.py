@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import timezone
+from datetime import timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -805,15 +805,16 @@ async def test_v1_prompt_cache_key_rebalances_after_affinity_expires(async_clien
             reset_at=now_epoch + 3600,
             window_minutes=300,
         )
+        stale_updated_at = utcnow() - timedelta(minutes=10)
         await session.execute(
             text(
                 """
                 UPDATE sticky_sessions
-                SET updated_at = datetime(updated_at, '-10 minutes')
+                SET updated_at = :stale_updated_at
                 WHERE key = :sticky_key
                 """
             ),
-            {"sticky_key": thread_key},
+            {"sticky_key": thread_key, "stale_updated_at": stale_updated_at},
         )
         await session.commit()
 
