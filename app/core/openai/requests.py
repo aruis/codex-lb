@@ -402,6 +402,7 @@ _UNSUPPORTED_UPSTREAM_FIELDS = {
 
 def _strip_unsupported_fields(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
     _normalize_openai_compatible_aliases(payload)
+    _normalize_service_tier_aliases(payload)
     _sanitize_interleaved_reasoning_input(payload)
     for key in _UNSUPPORTED_UPSTREAM_FIELDS:
         payload.pop(key, None)
@@ -453,6 +454,14 @@ def _normalize_openai_compatible_aliases(payload: dict[str, JsonValue]) -> None:
         text_map["verbosity"] = top_level_verbosity
     if text_map:
         payload["text"] = text_map
+
+
+def _normalize_service_tier_aliases(payload: dict[str, JsonValue]) -> None:
+    service_tier = payload.get("service_tier")
+    if not isinstance(service_tier, str):
+        return
+    if service_tier.strip().lower() == "fast":
+        payload["service_tier"] = "priority"
 
 
 def _normalize_input_text(text: str) -> list[JsonValue]:

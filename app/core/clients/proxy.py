@@ -10,7 +10,8 @@ import logging
 import socket
 import time
 from dataclasses import dataclass
-from typing import AsyncContextManager, AsyncIterator, Awaitable, Mapping, Protocol, TypeAlias, cast
+from types import SimpleNamespace
+from typing import Any, AsyncContextManager, AsyncIterator, Awaitable, Mapping, Protocol, TypeAlias, cast
 from urllib.parse import ParseResult, urlparse, urlunparse
 
 import aiohttp
@@ -18,6 +19,7 @@ import aiohttp
 from app.core.clients.http import get_http_client
 from app.core.config.settings import get_settings
 from app.core.errors import OpenAIErrorEnvelope, ResponseFailedEvent, openai_error, response_failed_event
+from app.core.openai.model_registry import get_model_registry
 from app.core.openai.models import OpenAIResponsePayload
 from app.core.openai.parsing import parse_error_payload, parse_response_payload, parse_sse_event
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
@@ -69,6 +71,15 @@ _UPSTREAM_TRACE_HEADER_ALLOWLIST = frozenset(
         "x-openai-client-user-agent",
         "x-openai-client-version",
         "x-request-id",
+    }
+)
+_NATIVE_CODEX_ORIGINATORS = frozenset({"codex_cli_rs", "Codex Desktop"})
+_NATIVE_CODEX_STREAM_HEADER_KEYS = frozenset(
+    {
+        "originator",
+        "session_id",
+        "x-codex-turn-metadata",
+        "x-codex-beta-features",
     }
 )
 
@@ -188,6 +199,25 @@ def _build_upstream_headers(
     return headers
 
 
+def _build_upstream_websocket_headers(
+    inbound: Mapping[str, str],
+    access_token: str,
+    account_id: str | None,
+) -> dict[str, str]:
+    headers = dict(inbound)
+    lower_keys = {key.lower() for key in headers}
+    if "x-request-id" not in lower_keys and "request-id" not in lower_keys:
+        request_id = get_request_id()
+        if request_id:
+            headers["x-request-id"] = request_id
+    headers["Authorization"] = f"Bearer {access_token}"
+    if account_id:
+        headers["chatgpt-account-id"] = account_id
+    headers.pop("Accept", None)
+    headers.pop("Content-Type", None)
+    return headers
+
+
 def _interesting_upstream_header_keys(headers: Mapping[str, str]) -> list[str]:
     return sorted({key.lower() for key in headers if key.lower() in _UPSTREAM_TRACE_HEADER_ALLOWLIST})
 
@@ -263,6 +293,7 @@ def _maybe_log_upstream_request_start(
     kind: str,
     url: str,
     headers: Mapping[str, str],
+    method: str,
     payload_summary: str,
     payload_json: str | None = None,
 ) -> None:
@@ -277,9 +308,10 @@ def _maybe_log_upstream_request_start(
 
     if settings.log_upstream_request_summary:
         logger.info(
-            "upstream_request_start request_id=%s kind=%s method=POST target=%s account_id=%s headers=%s payload=%s",
+            "upstream_request_start request_id=%s kind=%s method=%s target=%s account_id=%s headers=%s payload=%s",
             request_id,
             kind,
+            method,
             target,
             account_id,
             header_keys,
@@ -300,6 +332,7 @@ def _maybe_log_upstream_request_complete(
     kind: str,
     url: str,
     headers: Mapping[str, str],
+    method: str,
     started_at: float,
     status_code: int | None,
     error_code: str | None,
@@ -318,11 +351,12 @@ def _maybe_log_upstream_request_complete(
     logger.log(
         level,
         (
-            "upstream_request_complete request_id=%s kind=%s method=POST target=%s "
+            "upstream_request_complete request_id=%s kind=%s method=%s target=%s "
             "account_id=%s status=%s duration_ms=%s error_code=%s error_message=%s"
         ),
         get_request_id(),
         kind,
+        method,
         _summarize_upstream_target(url),
         headers.get("chatgpt-account-id"),
         status_code,
@@ -585,6 +619,188 @@ def _normalize_sse_event_block(event_block: str) -> str:
     if terminator:
         return normalized + terminator
     return normalized
+
+
+def _normalize_stream_event_payload(payload: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    event_type = payload.get("type")
+    if isinstance(event_type, str) and event_type in _SSE_EVENT_TYPE_ALIASES:
+        normalized = dict(payload)
+        normalized["type"] = _SSE_EVENT_TYPE_ALIASES[event_type]
+        return normalized
+    return payload
+
+
+def _to_websocket_upstream_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        scheme = "wss"
+    elif parsed.scheme == "http":
+        scheme = "ws"
+    else:
+        scheme = parsed.scheme
+    return urlunparse((scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+
+
+def _configured_stream_transport(settings: object) -> str:
+    explicit_override = getattr(settings, "upstream_stream_transport_override", None)
+    if explicit_override in {"http", "websocket", "auto"}:
+        return cast(str, explicit_override)
+    configured = getattr(settings, "upstream_stream_transport", None)
+    if configured in {"http", "websocket", "auto"}:
+        return cast(str, configured)
+    legacy = getattr(settings, "upstream_websocket_mode", None)
+    if legacy == "force":
+        return "websocket"
+    if legacy == "auto":
+        return "auto"
+    return "auto"
+
+
+def _has_native_codex_transport_headers(headers: Mapping[str, str]) -> bool:
+    normalized = {key.lower(): value for key, value in headers.items()}
+    originator = normalized.get("originator")
+    if isinstance(originator, str) and originator in _NATIVE_CODEX_ORIGINATORS:
+        return True
+    return any(key in normalized for key in _NATIVE_CODEX_STREAM_HEADER_KEYS)
+
+
+def _resolve_stream_transport(settings: object, model: str | None, headers: Mapping[str, str]) -> str:
+    configured = _configured_stream_transport(settings)
+    if configured == "websocket":
+        return "websocket"
+    if configured == "http":
+        return "http"
+    if _has_native_codex_transport_headers(headers):
+        return "websocket"
+
+    snapshot = get_model_registry().get_snapshot()
+    if snapshot is None or not isinstance(model, str):
+        return "http"
+    upstream_model = snapshot.models.get(model)
+    if upstream_model and upstream_model.prefer_websockets:
+        return "websocket"
+    return "http"
+
+
+async def _open_upstream_websocket(
+    *,
+    session: aiohttp.ClientSession,
+    url: str,
+    headers: Mapping[str, str],
+    connect_timeout_seconds: float,
+    max_msg_size: int,
+) -> tuple[AsyncContextManager[aiohttp.ClientWebSocketResponse], aiohttp.ClientWebSocketResponse]:
+    websocket_cm = session.ws_connect(
+        url,
+        headers=headers,
+        receive_timeout=None,
+        autoping=True,
+        autoclose=True,
+        max_msg_size=max_msg_size,
+    )
+    websocket = await asyncio.wait_for(websocket_cm.__aenter__(), timeout=connect_timeout_seconds)
+    return websocket_cm, websocket
+
+
+async def _stream_websocket_events(
+    websocket: aiohttp.ClientWebSocketResponse,
+    *,
+    idle_timeout_seconds: float,
+    total_timeout_seconds: float | None,
+    max_event_bytes: int,
+) -> AsyncIterator[str]:
+    deadline = None if total_timeout_seconds is None else time.monotonic() + total_timeout_seconds
+
+    while True:
+        timeout_seconds = idle_timeout_seconds
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise asyncio.TimeoutError
+            timeout_seconds = min(timeout_seconds, remaining)
+
+        try:
+            message = await asyncio.wait_for(websocket.receive(), timeout=timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            if deadline is not None and deadline - time.monotonic() <= 0:
+                raise
+            raise StreamIdleTimeoutError() from exc
+
+        if message.type in {aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED}:
+            break
+        if message.type == aiohttp.WSMsgType.ERROR:
+            exc = websocket.exception()
+            if exc is None and isinstance(message.data, BaseException):
+                exc = message.data
+            raise exc or aiohttp.ClientError("Upstream websocket error")
+        if message.type not in {aiohttp.WSMsgType.TEXT, aiohttp.WSMsgType.BINARY}:
+            continue
+
+        if message.type == aiohttp.WSMsgType.TEXT:
+            text = message.data
+        else:
+            text = message.data.decode("utf-8", errors="replace")
+        text_bytes = text.encode("utf-8")
+        if len(text_bytes) > max_event_bytes:
+            raise StreamEventTooLargeError(len(text_bytes), max_event_bytes)
+
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        normalized = _normalize_stream_event_payload(payload)
+        yield format_sse_event(normalized)
+
+
+async def _stream_responses_via_websocket(
+    *,
+    payload_dict: JsonObject,
+    url: str,
+    headers: Mapping[str, str],
+    client_session: aiohttp.ClientSession,
+    effective_total_timeout: float,
+    effective_connect_timeout: float,
+    effective_idle_timeout: float,
+    max_event_bytes: int,
+    raise_for_status: bool,
+) -> AsyncIterator[str]:
+    websocket_url = _to_websocket_upstream_url(url)
+    request_payload: JsonObject = {"type": "response.create", **payload_dict}
+    websocket_cm: AsyncContextManager[aiohttp.ClientWebSocketResponse] | None = None
+    websocket: aiohttp.ClientWebSocketResponse | None = None
+    try:
+        websocket_cm, websocket = await _open_upstream_websocket(
+            session=client_session,
+            url=websocket_url,
+            headers=headers,
+            connect_timeout_seconds=effective_connect_timeout,
+            max_msg_size=max_event_bytes,
+        )
+    except aiohttp.WSServerHandshakeError as exc:
+        payload = openai_error("upstream_error", str(exc))
+        if raise_for_status:
+            raise ProxyResponseError(exc.status, payload) from exc
+        yield format_sse_event(response_failed_event("upstream_error", str(exc), response_id=get_request_id()))
+        return
+
+    try:
+        send_json = getattr(websocket, "send_json", None)
+        if callable(send_json):
+            await cast(Any, send_json)(request_payload)
+        else:
+            await websocket.send_str(json.dumps(request_payload, ensure_ascii=True, separators=(",", ":")))
+        async for event in _stream_websocket_events(
+            websocket,
+            idle_timeout_seconds=effective_idle_timeout,
+            total_timeout_seconds=effective_total_timeout,
+            max_event_bytes=max_event_bytes,
+        ):
+            yield event
+    finally:
+        if websocket_cm is not None:
+            await websocket_cm.__aexit__(None, None, None)
 
 
 async def _inline_input_image_urls(
@@ -860,11 +1076,11 @@ async def stream_responses(
     base_url: str | None = None,
     raise_for_status: bool = False,
     session: aiohttp.ClientSession | None = None,
+    upstream_stream_transport_override: str | None = None,
 ) -> AsyncIterator[str]:
     settings = get_settings()
     upstream_base = (base_url or settings.upstream_base_url).rstrip("/")
     url = f"{upstream_base}/codex/responses"
-    upstream_headers = _build_upstream_headers(headers, access_token, account_id)
     pre_request_started_at = time.monotonic()
     effective_total_timeout = _effective_stream_timeout(
         getattr(settings, "proxy_request_budget_seconds", 75.0),
@@ -885,6 +1101,21 @@ async def stream_responses(
             _as_image_fetch_session(client_session),
             effective_connect_timeout,
         )
+    stream_settings = (
+        SimpleNamespace(
+            upstream_stream_transport=settings.upstream_stream_transport,
+            upstream_stream_transport_override=upstream_stream_transport_override,
+        )
+        if upstream_stream_transport_override is not None
+        else settings
+    )
+    transport = _resolve_stream_transport(stream_settings, payload.model, headers)
+    if transport == "websocket":
+        upstream_headers = _build_upstream_websocket_headers(headers, access_token, account_id)
+        method = "GET"
+    else:
+        upstream_headers = _build_upstream_headers(headers, access_token, account_id)
+        method = "POST"
     effective_total_timeout = _remaining_total_timeout(
         effective_total_timeout,
         pre_request_started_at,
@@ -900,42 +1131,68 @@ async def stream_responses(
         kind="responses",
         url=url,
         headers=upstream_headers,
+        method=method,
         payload_summary=_summarize_json_payload(payload_dict),
         payload_json=json.dumps(payload_dict, ensure_ascii=True, separators=(",", ":"))
         if settings.log_upstream_request_payload
         else None,
     )
     try:
-        async with client_session.post(
-            url,
-            json=payload_dict,
-            headers=upstream_headers,
-            timeout=timeout,
-        ) as resp:
-            status_code = resp.status
-            if resp.status >= 400:
-                if raise_for_status:
-                    error_payload = await _error_payload_from_response(resp)
-                    error_code, error_message = _error_details_from_envelope(error_payload)
-                    raise ProxyResponseError(resp.status, error_payload)
-                event = await _error_event_from_response(resp)
-                error_code, error_message = _error_details_from_failed_event(event)
-                yield format_sse_event(event)
-                return
-
-            async for event_block in _iter_sse_events(
-                resp,
-                effective_idle_timeout,
-                settings.max_sse_event_bytes,
+        if transport == "websocket":
+            async for event_block in _stream_responses_via_websocket(
+                payload_dict=payload_dict,
+                url=url,
+                headers=upstream_headers,
+                client_session=client_session,
+                effective_total_timeout=(
+                    effective_total_timeout
+                    or getattr(settings, "proxy_request_budget_seconds", 75.0)
+                ),
+                effective_connect_timeout=effective_connect_timeout,
+                effective_idle_timeout=effective_idle_timeout,
+                max_event_bytes=settings.max_sse_event_bytes,
+                raise_for_status=raise_for_status,
             ):
-                event_block = _normalize_sse_event_block(event_block)
+                if status_code is None:
+                    status_code = 101
                 event = parse_sse_event(event_block)
                 if event:
                     event_type = event.type
                     if event_type in ("response.completed", "response.failed", "response.incomplete"):
                         seen_terminal = True
                 yield event_block
-    except ProxyResponseError:
+        else:
+            async with client_session.post(
+                url,
+                json=payload_dict,
+                headers=upstream_headers,
+                timeout=timeout,
+            ) as resp:
+                status_code = resp.status
+                if resp.status >= 400:
+                    if raise_for_status:
+                        error_payload = await _error_payload_from_response(resp)
+                        error_code, error_message = _error_details_from_envelope(error_payload)
+                        raise ProxyResponseError(resp.status, error_payload)
+                    event = await _error_event_from_response(resp)
+                    error_code, error_message = _error_details_from_failed_event(event)
+                    yield format_sse_event(event)
+                    return
+
+                async for event_block in _iter_sse_events(
+                    resp,
+                    effective_idle_timeout,
+                    settings.max_sse_event_bytes,
+                ):
+                    event_block = _normalize_sse_event_block(event_block)
+                    event = parse_sse_event(event_block)
+                    if event:
+                        event_type = event.type
+                        if event_type in ("response.completed", "response.failed", "response.incomplete"):
+                            seen_terminal = True
+                    yield event_block
+    except ProxyResponseError as exc:
+        status_code = exc.status_code
         raise
     except StreamIdleTimeoutError:
         error_code = "stream_idle_timeout"
@@ -1007,6 +1264,7 @@ async def stream_responses(
             kind="responses",
             url=url,
             headers=upstream_headers,
+            method=method,
             started_at=started_at,
             status_code=status_code,
             error_code=error_code,
@@ -1155,6 +1413,7 @@ async def compact_responses(
         kind="responses_compact",
         url=url,
         headers=upstream_headers,
+        method="POST",
         payload_summary=_summarize_json_payload(payload_dict),
         payload_json=json.dumps(payload_dict, ensure_ascii=True, separators=(",", ":"))
         if settings.log_upstream_request_payload
@@ -1209,6 +1468,7 @@ async def compact_responses(
             kind="responses_compact",
             url=url,
             headers=upstream_headers,
+            method="POST",
             started_at=started_at,
             status_code=status_code,
             error_code=error_code,
@@ -1283,6 +1543,7 @@ async def transcribe_audio(
         kind="transcribe",
         url=url,
         headers=upstream_headers,
+        method="POST",
         payload_summary=json.dumps(metadata, ensure_ascii=True, separators=(",", ":")),
         payload_json=json.dumps(metadata, ensure_ascii=True, separators=(",", ":"))
         if settings.log_upstream_request_payload
@@ -1340,6 +1601,7 @@ async def transcribe_audio(
             kind="transcribe",
             url=url,
             headers=upstream_headers,
+            method="POST",
             started_at=started_at,
             status_code=status_code,
             error_code=error_code,

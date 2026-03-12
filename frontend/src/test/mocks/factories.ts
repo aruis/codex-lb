@@ -276,6 +276,7 @@ export function createDashboardAuthSession(
 export function createDashboardSettings(overrides: Partial<DashboardSettings> = {}): DashboardSettings {
   return DashboardSettingsSchema.parse({
     stickyThreadsEnabled: true,
+    upstreamStreamTransport: "default",
     preferEarlierResetAccounts: false,
     routingStrategy: "usage_weighted",
     openaiCacheAffinityMaxAgeSeconds: 300,

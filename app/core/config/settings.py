@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     database_sqlite_startup_check_mode: Literal["quick", "full", "off"] = "quick"
     database_alembic_auto_remap_enabled: bool = True
     upstream_base_url: str = "https://chatgpt.com/backend-api"
+    upstream_stream_transport: Literal["http", "websocket", "auto"] = "auto"
     upstream_connect_timeout_seconds: float = 8.0
     upstream_compact_timeout_seconds: float | None = None
     proxy_request_budget_seconds: float = Field(default=75.0, gt=0)
