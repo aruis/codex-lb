@@ -108,6 +108,17 @@ def test_build_upstream_websocket_headers_strip_accept_and_content_type_case_ins
     assert headers["User-Agent"] == "codex-test"
 
 
+def test_has_native_codex_transport_headers_requires_allowlisted_originator():
+    assert proxy_module._has_native_codex_transport_headers({"originator": "codex_cli_rs"}) is True
+    assert proxy_module._has_native_codex_transport_headers({"originator": "Codex Desktop"}) is True
+    assert proxy_module._has_native_codex_transport_headers({"originator": "other-client"}) is False
+
+
+def test_has_native_codex_transport_headers_still_accepts_native_stream_headers_without_originator():
+    assert proxy_module._has_native_codex_transport_headers({"session_id": "sid_123"}) is True
+    assert proxy_module._has_native_codex_transport_headers({"x-codex-turn-metadata": "1"}) is True
+
+
 def test_parse_sse_event_reads_json_payload():
     payload = {"type": "response.completed", "response": {"id": "resp_1"}}
     line = f"data: {json.dumps(payload)}\n"

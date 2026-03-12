@@ -76,7 +76,6 @@ _UPSTREAM_TRACE_HEADER_ALLOWLIST = frozenset(
 _NATIVE_CODEX_ORIGINATORS = frozenset({"codex_cli_rs", "Codex Desktop"})
 _NATIVE_CODEX_STREAM_HEADER_KEYS = frozenset(
     {
-        "originator",
         "session_id",
         "x-codex-turn-metadata",
         "x-codex-beta-features",
