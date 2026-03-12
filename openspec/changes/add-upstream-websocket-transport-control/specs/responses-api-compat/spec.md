@@ -22,6 +22,11 @@ For streaming Codex/Responses proxy requests, the system MUST let operators choo
 - **AND** it does not include an allowlisted native Codex `originator` or explicit Codex websocket feature headers
 - **THEN** the `"auto"` transport strategy MUST keep using the existing HTTP Responses transport unless model preference selects websocket
 
+#### Scenario: Websocket upstream handshake strips hop-by-hop inbound headers
+- **WHEN** streaming upstream traffic uses the native Responses WebSocket transport
+- **THEN** the upstream websocket handshake MUST omit hop-by-hop request headers such as `Connection`, `Keep-Alive`, `Transfer-Encoding`, and `Upgrade`
+- **AND** the proxy MUST also omit any additional header names named by the inbound `Connection` header before calling the upstream websocket client
+
 ### Requirement: Fast service tier aliases priority upstream
 When a Responses request includes `service_tier: "fast"`, the service MUST preserve the requested tier for local observability while normalizing the outbound upstream payload to `service_tier: "priority"`.
 

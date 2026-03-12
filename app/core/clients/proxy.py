@@ -80,6 +80,21 @@ _NATIVE_CODEX_STREAM_HEADER_KEYS = frozenset(
         "x-codex-beta-features",
     }
 )
+_HOP_BY_HOP_HEADER_NAMES = frozenset(
+    {
+        "accept",
+        "connection",
+        "content-type",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+)
 _AUTO_WEBSOCKET_HANDSHAKE_FALLBACK_STATUSES = frozenset({403, 404, 426})
 
 logger = logging.getLogger(__name__)
@@ -203,7 +218,17 @@ def _build_upstream_websocket_headers(
     access_token: str,
     account_id: str | None,
 ) -> dict[str, str]:
-    headers = {key: value for key, value in inbound.items() if key.lower() not in {"accept", "content-type"}}
+    connected_header_tokens: set[str] = set()
+    for key, value in inbound.items():
+        if key.lower() != "connection":
+            continue
+        connected_header_tokens.update(
+            token.strip().lower()
+            for token in value.split(",")
+            if isinstance(value, str) and token.strip()
+        )
+    blocked_header_names = _HOP_BY_HOP_HEADER_NAMES | connected_header_tokens
+    headers = {key: value for key, value in inbound.items() if key.lower() not in blocked_header_names}
     lower_keys = {key.lower() for key in headers}
     if "x-request-id" not in lower_keys and "request-id" not in lower_keys:
         request_id = get_request_id()

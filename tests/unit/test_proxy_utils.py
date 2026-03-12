@@ -108,6 +108,32 @@ def test_build_upstream_websocket_headers_strip_accept_and_content_type_case_ins
     assert headers["User-Agent"] == "codex-test"
 
 
+def test_build_upstream_websocket_headers_strip_hop_by_hop_headers_and_connection_tokens():
+    headers = proxy_module._build_upstream_websocket_headers(
+        {
+            "Connection": "keep-alive, Upgrade, X-Handshake-Debug",
+            "Keep-Alive": "timeout=5",
+            "Upgrade": "websocket",
+            "Transfer-Encoding": "chunked",
+            "Proxy-Connection": "keep-alive",
+            "X-Handshake-Debug": "1",
+            "User-Agent": "codex-test",
+        },
+        "token",
+        "acc_2",
+    )
+
+    assert "Connection" not in headers
+    assert "Keep-Alive" not in headers
+    assert "Upgrade" not in headers
+    assert "Transfer-Encoding" not in headers
+    assert "Proxy-Connection" not in headers
+    assert "X-Handshake-Debug" not in headers
+    assert headers["Authorization"] == "Bearer token"
+    assert headers["chatgpt-account-id"] == "acc_2"
+    assert headers["User-Agent"] == "codex-test"
+
+
 def test_has_native_codex_transport_headers_requires_allowlisted_originator():
     assert proxy_module._has_native_codex_transport_headers({"originator": "codex_cli_rs"}) is True
     assert proxy_module._has_native_codex_transport_headers({"originator": "Codex Desktop"}) is True
