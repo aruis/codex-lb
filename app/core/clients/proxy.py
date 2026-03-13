@@ -4,9 +4,11 @@ import asyncio
 import base64
 import contextlib
 import contextvars
+import hashlib
 import ipaddress
 import json
 import logging
+import os
 import socket
 import time
 from dataclasses import dataclass
@@ -15,6 +17,9 @@ from typing import Any, AsyncContextManager, AsyncIterator, Awaitable, Mapping, 
 from urllib.parse import ParseResult, urlparse, urlunparse
 
 import aiohttp
+from aiohttp import hdrs
+from aiohttp.client_ws import DEFAULT_WS_CLIENT_TIMEOUT
+from multidict import CIMultiDict
 
 from app.core.clients.http import get_http_client
 from app.core.config.settings import get_settings
@@ -788,16 +793,93 @@ async def _open_upstream_websocket(
     connect_timeout_seconds: float,
     max_msg_size: int,
 ) -> tuple[AsyncContextManager[aiohttp.ClientWebSocketResponse], aiohttp.ClientWebSocketResponse]:
-    websocket_cm = session.ws_connect(
+    request = getattr(session, "request", None)
+    if not callable(request):
+        websocket_cm = session.ws_connect(
+            url,
+            headers=headers,
+            receive_timeout=None,
+            autoping=True,
+            autoclose=True,
+            max_msg_size=max_msg_size,
+        )
+        websocket = await asyncio.wait_for(websocket_cm.__aenter__(), timeout=connect_timeout_seconds)
+        return websocket_cm, websocket
+
+    request_headers = CIMultiDict(headers)
+    request_headers.setdefault(hdrs.UPGRADE, "websocket")
+    request_headers.setdefault(hdrs.CONNECTION, "Upgrade")
+    request_headers.setdefault(hdrs.SEC_WEBSOCKET_VERSION, "13")
+    sec_key = base64.b64encode(os.urandom(16)).decode()
+    request_headers[hdrs.SEC_WEBSOCKET_KEY] = sec_key
+
+    timeout = aiohttp.ClientTimeout(total=connect_timeout_seconds, sock_connect=connect_timeout_seconds)
+    resp = await request(
+        hdrs.METH_GET,
         url,
-        headers=headers,
-        receive_timeout=None,
-        autoping=True,
-        autoclose=True,
-        max_msg_size=max_msg_size,
+        headers=request_headers,
+        timeout=timeout,
+        read_until_eof=False,
     )
-    websocket = await asyncio.wait_for(websocket_cm.__aenter__(), timeout=connect_timeout_seconds)
-    return websocket_cm, websocket
+
+    async def _raise_handshake_error(message: str) -> None:
+        body_text = ""
+        try:
+            body_text = (await resp.text()).strip()
+        except Exception:
+            body_text = ""
+        raise aiohttp.WSServerHandshakeError(
+            resp.request_info,
+            resp.history,
+            message=body_text or message,
+            status=resp.status,
+            headers=resp.headers,
+        )
+
+    try:
+        if resp.status != 101:
+            await _raise_handshake_error("Invalid response status")
+
+        if resp.headers.get(hdrs.UPGRADE, "").lower() != "websocket":
+            await _raise_handshake_error("Invalid upgrade header")
+
+        if resp.headers.get(hdrs.CONNECTION, "").lower() != "upgrade":
+            await _raise_handshake_error("Invalid connection header")
+
+        response_key = resp.headers.get(hdrs.SEC_WEBSOCKET_ACCEPT, "")
+        expected_key = base64.b64encode(hashlib.sha1(sec_key.encode() + aiohttp.client.WS_KEY).digest()).decode()
+        if response_key != expected_key:
+            await _raise_handshake_error("Invalid challenge response")
+
+        conn = resp.connection
+        assert conn is not None
+        conn_proto = conn.protocol
+        assert conn_proto is not None
+        conn_proto.read_timeout = None
+
+        transport = conn.transport
+        assert transport is not None
+        reader = aiohttp.client.WebSocketDataQueue(conn_proto, 2**16, loop=session._loop)
+        conn_proto.set_parser(aiohttp.client.WebSocketReader(reader, max_msg_size), reader)
+        writer = aiohttp.client.WebSocketWriter(conn_proto, transport, use_mask=True, compress=0, notakeover=False)
+    except BaseException:
+        resp.close()
+        raise
+
+    websocket = session._ws_response_class(
+        reader,
+        writer,
+        None,
+        resp,
+        DEFAULT_WS_CLIENT_TIMEOUT,
+        True,
+        True,
+        session._loop,
+        heartbeat=None,
+        compress=0,
+        client_notakeover=False,
+    )
+    return websocket, websocket
 
 
 async def _stream_websocket_events(

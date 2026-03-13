@@ -1410,6 +1410,48 @@ async def test_stream_responses_via_websocket_counts_connect_and_send_against_to
 
 
 @pytest.mark.asyncio
+async def test_open_upstream_websocket_preserves_error_body_on_handshake_failure():
+    error_body = json.dumps(
+        {"error": {"message": "quota exhausted", "type": "server_error", "code": "insufficient_quota"}}
+    )
+
+    class _HandshakeFailureResponse:
+        def __init__(self) -> None:
+            self.status = 403
+            self.headers = {}
+            self.request_info = SimpleNamespace(real_url="wss://chatgpt.com/backend-api/codex/responses")
+            self.history = ()
+            self.connection = None
+            self.closed = False
+
+        async def text(self) -> str:
+            return error_body
+
+        def close(self) -> None:
+            self.closed = True
+
+    class _HandshakeFailureSession:
+        def __init__(self) -> None:
+            self._loop = asyncio.get_running_loop()
+            self._ws_response_class = proxy_module.aiohttp.ClientWebSocketResponse
+
+        async def request(self, method, url, **kwargs):
+            del method, url, kwargs
+            return _HandshakeFailureResponse()
+
+    with pytest.raises(proxy_module.aiohttp.WSServerHandshakeError) as exc_info:
+        await proxy_module._open_upstream_websocket(
+            session=cast(proxy_module.aiohttp.ClientSession, _HandshakeFailureSession()),
+            url="wss://chatgpt.com/backend-api/codex/responses",
+            headers={"Authorization": "Bearer token"},
+            connect_timeout_seconds=8.0,
+            max_msg_size=1024,
+        )
+
+    assert "insufficient_quota" in exc_info.value.message
+
+
+@pytest.mark.asyncio
 async def test_stream_responses_auto_transport_uses_model_preference(monkeypatch):
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
