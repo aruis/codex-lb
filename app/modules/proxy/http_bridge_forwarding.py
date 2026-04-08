@@ -29,6 +29,8 @@ HTTP_BRIDGE_CODEX_AFFINITY_HEADER = "x-codex-bridge-codex-session-affinity"
 HTTP_BRIDGE_RESERVATION_ID_HEADER = "x-codex-bridge-reservation-id"
 HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER = "x-codex-bridge-reservation-key-id"
 HTTP_BRIDGE_RESERVATION_MODEL_HEADER = "x-codex-bridge-reservation-model"
+HTTP_BRIDGE_AFFINITY_KIND_HEADER = "x-codex-bridge-affinity-kind"
+HTTP_BRIDGE_AFFINITY_KEY_HEADER = "x-codex-bridge-affinity-key"
 HTTP_BRIDGE_SIGNATURE_HEADER = "x-codex-bridge-signature"
 
 
@@ -38,6 +40,8 @@ class HTTPBridgeForwardContext:
     target_instance: str
     codex_session_affinity: bool
     downstream_turn_state: str | None
+    original_affinity_kind: str | None = None
+    original_affinity_key: str | None = None
     reservation: ApiKeyUsageReservationData | None = None
 
 
@@ -125,6 +129,9 @@ def build_owner_forward_headers(
     forwarded[HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER] = context.origin_instance
     forwarded[HTTP_BRIDGE_TARGET_INSTANCE_HEADER] = context.target_instance
     forwarded[HTTP_BRIDGE_CODEX_AFFINITY_HEADER] = "1" if context.codex_session_affinity else "0"
+    if context.original_affinity_kind and context.original_affinity_key:
+        forwarded[HTTP_BRIDGE_AFFINITY_KIND_HEADER] = context.original_affinity_kind
+        forwarded[HTTP_BRIDGE_AFFINITY_KEY_HEADER] = context.original_affinity_key
     if context.downstream_turn_state:
         forwarded["x-codex-turn-state"] = context.downstream_turn_state
     if context.reservation is not None:
@@ -165,6 +172,8 @@ def parse_forwarded_request(
         target_instance=target_instance,
         codex_session_affinity=_bool_header(headers.get(HTTP_BRIDGE_CODEX_AFFINITY_HEADER)),
         downstream_turn_state=_optional_header(headers.get("x-codex-turn-state")),
+        original_affinity_kind=_optional_header(headers.get(HTTP_BRIDGE_AFFINITY_KIND_HEADER)),
+        original_affinity_key=_optional_header(headers.get(HTTP_BRIDGE_AFFINITY_KEY_HEADER)),
         reservation=_reservation_from_headers(headers),
     )
     signature = _optional_header(headers.get(HTTP_BRIDGE_SIGNATURE_HEADER))
@@ -229,6 +238,8 @@ def _bridge_forward_signature(*, payload: ResponsesRequest, context: HTTPBridgeF
             context.target_instance,
             "1" if context.codex_session_affinity else "0",
             context.downstream_turn_state or "",
+            context.original_affinity_kind or "",
+            context.original_affinity_key or "",
             context.reservation.reservation_id if context.reservation is not None else "",
             context.reservation.key_id if context.reservation is not None else "",
             context.reservation.model if context.reservation is not None else "",

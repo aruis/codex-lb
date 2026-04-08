@@ -83,16 +83,17 @@ def test_external_secrets_upgrade_keeps_startup_migration_disabled_and_runs_hook
     assert '"helm.sh/hook": "post-install,pre-upgrade"' in rendered
 
 
-def test_upgrade_renders_legacy_deployment_shutdown_for_statefulset_migration() -> None:
+def test_upgrade_renders_legacy_deployment_cleanup_hook_for_statefulset_migration() -> None:
     rendered = _helm_template(
         "--is-upgrade",
         "--show-only",
-        "templates/legacy-deployment-shutdown.yaml",
+        "templates/legacy-deployment-cleanup-hook.yaml",
     )
 
-    assert "kind: Deployment" in rendered
-    assert "name: codex-lb" in rendered
-    assert "replicas: 0" in rendered
+    assert "kind: Job" in rendered
+    assert '"helm.sh/hook": post-upgrade' in rendered
+    assert "LEGACY_DEPLOYMENT_NAME" in rendered
+    assert "STATEFULSET_NAME" in rendered
 
 
 def test_chart_managed_secret_keeps_pre_install_hook_path() -> None:

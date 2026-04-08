@@ -11,6 +11,8 @@ from app.core.config.settings import get_settings
 from app.core.openai.requests import ResponsesRequest
 from app.modules.api_keys.service import ApiKeyUsageReservationData
 from app.modules.proxy.http_bridge_forwarding import (
+    HTTP_BRIDGE_AFFINITY_KEY_HEADER,
+    HTTP_BRIDGE_AFFINITY_KIND_HEADER,
     HTTP_BRIDGE_CODEX_AFFINITY_HEADER,
     HTTP_BRIDGE_FORWARDED_HEADER,
     HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER,
@@ -63,6 +65,25 @@ def test_parse_forwarded_request_accepts_signed_internal_forward() -> None:
     assert error is None
     assert forwarded is not None
     assert forwarded.context == context
+    assert forwarded.context.original_affinity_kind is None
+    assert forwarded.context.original_affinity_key is None
+
+
+def test_build_owner_forward_headers_preserves_original_affinity_key() -> None:
+    payload = _payload()
+    context = HTTPBridgeForwardContext(
+        origin_instance="instance-a",
+        target_instance="instance-b",
+        codex_session_affinity=True,
+        downstream_turn_state="http_turn_123",
+        original_affinity_kind="session_header",
+        original_affinity_key="sid-123",
+    )
+
+    headers = build_owner_forward_headers(headers={}, payload=payload, context=context)
+
+    assert headers[HTTP_BRIDGE_AFFINITY_KIND_HEADER] == "session_header"
+    assert headers[HTTP_BRIDGE_AFFINITY_KEY_HEADER] == "sid-123"
 
 
 def test_parse_forwarded_request_rejects_missing_signature() -> None:

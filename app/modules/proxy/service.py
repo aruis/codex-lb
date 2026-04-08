@@ -402,6 +402,7 @@ class ProxyService:
                 headers=headers,
                 api_key_reservation=api_key_reservation,
                 codex_session_affinity=codex_session_affinity,
+                downstream_turn_state=downstream_turn_state,
                 request_started_at=request_state.started_at,
                 proxy_api_authorization=proxy_api_authorization,
             ):
@@ -443,17 +444,20 @@ class ProxyService:
         headers: Mapping[str, str],
         api_key_reservation: ApiKeyUsageReservationData | None,
         codex_session_affinity: bool,
+        downstream_turn_state: str | None,
         request_started_at: float,
         proxy_api_authorization: str | None,
     ) -> AsyncIterator[str]:
         current_instance, _ = _normalized_http_bridge_instance_ring(get_settings())
-        forwarded_turn_state = _header_value_case_insensitive(headers, "x-codex-turn-state")
+        forwarded_turn_state = _header_value_case_insensitive(headers, "x-codex-turn-state") or downstream_turn_state
         forward_context = HTTPBridgeForwardContext(
             origin_instance=current_instance,
             target_instance=owner_forward.owner_instance,
             reservation=api_key_reservation,
             codex_session_affinity=codex_session_affinity,
             downstream_turn_state=forwarded_turn_state,
+            original_affinity_kind=owner_forward.key.affinity_kind,
+            original_affinity_key=owner_forward.key.affinity_key,
         )
         forward_headers = _headers_with_authorization(headers, proxy_api_authorization)
         start = time.monotonic()
@@ -5607,6 +5611,9 @@ def _make_http_bridge_session_key(
     api_key: ApiKeyData | None,
     request_id: str,
 ) -> _HTTPBridgeSessionKey:
+    forwarded_key = _forwarded_http_bridge_session_key(headers, api_key)
+    if forwarded_key is not None:
+        return forwarded_key
     turn_state_key = _sticky_key_from_turn_state_header(headers)
     if turn_state_key is not None:
         affinity_key = turn_state_key
@@ -5622,6 +5629,27 @@ def _make_http_bridge_session_key(
             affinity_key = affinity.key or request_id
             affinity_kind = affinity.kind.value if affinity.kind is not None else "request"
             strength = "soft"
+    return _HTTPBridgeSessionKey(
+        affinity_kind=affinity_kind,
+        affinity_key=affinity_key,
+        api_key_id=api_key.id if api_key is not None else None,
+        strength=strength,
+    )
+
+
+def _forwarded_http_bridge_session_key(
+    headers: Mapping[str, str],
+    api_key: ApiKeyData | None,
+) -> _HTTPBridgeSessionKey | None:
+    affinity_kind = _header_value_case_insensitive(headers, "x-codex-bridge-affinity-kind")
+    affinity_key = _header_value_case_insensitive(headers, "x-codex-bridge-affinity-key")
+    if affinity_kind is None or affinity_key is None:
+        return None
+    strength: Literal["hard", "soft"]
+    if affinity_kind in {"turn_state_header", "session_header"}:
+        strength = "hard"
+    else:
+        strength = "soft"
     return _HTTPBridgeSessionKey(
         affinity_kind=affinity_kind,
         affinity_key=affinity_key,

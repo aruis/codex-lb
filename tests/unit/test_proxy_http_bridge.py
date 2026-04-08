@@ -203,6 +203,26 @@ def test_headers_with_authorization_does_not_override_existing_value() -> None:
     assert headers["authorization"] == "Bearer existing"
 
 
+def test_make_http_bridge_session_key_prefers_signed_forwarded_affinity_over_generated_turn_state() -> None:
+    payload = proxy_service.ResponsesRequest.model_validate({"model": "gpt-5.4", "instructions": "hi", "input": "hi"})
+
+    key = proxy_service._make_http_bridge_session_key(
+        payload,
+        headers={
+            "x-codex-turn-state": "http_turn_generated",
+            "x-codex-bridge-affinity-kind": "session_header",
+            "x-codex-bridge-affinity-key": "sid-123",
+        },
+        affinity=proxy_service._AffinityPolicy(key="sid-123"),
+        api_key=None,
+        request_id="req-1",
+    )
+
+    assert key.affinity_kind == "session_header"
+    assert key.affinity_key == "sid-123"
+    assert key.strength == "hard"
+
+
 @pytest.mark.asyncio
 async def test_forward_http_bridge_request_to_owner_preserves_session_header_key(
     monkeypatch: pytest.MonkeyPatch,
@@ -237,13 +257,17 @@ async def test_forward_http_bridge_request_to_owner_preserves_session_header_key
             headers={"x-codex-session-id": "sid-123"},
             api_key_reservation=None,
             codex_session_affinity=True,
+            downstream_turn_state="http_turn_generated",
             request_started_at=10.0,
             proxy_api_authorization=None,
         )
     ]
 
     assert chunks == []
-    assert cast(proxy_service.HTTPBridgeForwardContext, captured["context"]).downstream_turn_state is None
+    context = cast(proxy_service.HTTPBridgeForwardContext, captured["context"])
+    assert context.downstream_turn_state == "http_turn_generated"
+    assert context.original_affinity_kind == "session_header"
+    assert context.original_affinity_key == "sid-123"
     assert cast(dict[str, str], captured["headers"])["x-codex-session-id"] == "sid-123"
 
 

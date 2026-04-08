@@ -1,0 +1,140 @@
+{{- if .Release.IsUpgrade }}
+{{- $cleanupName := printf "%s-legacy-cleanup" (include "codex-lb.fullname" . | trunc 42 | trimSuffix "-") -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $cleanupName }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "codex-lb.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $cleanupName }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "codex-lb.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $cleanupName }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "codex-lb.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+subjects:
+  - kind: ServiceAccount
+    name: {{ $cleanupName }}
+    namespace: {{ .Release.Namespace | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $cleanupName }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $cleanupName }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "codex-lb.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        {{- include "codex-lb.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: legacy-cleanup
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ $cleanupName }}
+      enableServiceLinks: false
+      containers:
+        - name: cleanup
+          image: {{ include "codex-lb.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - python
+            - -c
+            - |
+              import json
+              import os
+              import ssl
+              import sys
+              import time
+              from urllib import error, request
+
+              namespace = os.environ["POD_NAMESPACE"]
+              statefulset = os.environ["STATEFULSET_NAME"]
+              deployment = os.environ["LEGACY_DEPLOYMENT_NAME"]
+              token = open("/var/run/secrets/kubernetes.io/serviceaccount/token", "r", encoding="utf-8").read().strip()
+              ca_file = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+              api = "https://kubernetes.default.svc"
+              headers = {
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/json",
+              }
+              ctx = ssl.create_default_context(cafile=ca_file)
+
+              def get_json(url: str) -> dict:
+                  req = request.Request(url, headers=headers)
+                  with request.urlopen(req, context=ctx, timeout=10) as resp:
+                      return json.load(resp)
+
+              sts_url = f"{api}/apis/apps/v1/namespaces/{namespace}/statefulsets/{statefulset}"
+              dep_url = f"{api}/apis/apps/v1/namespaces/{namespace}/deployments/{deployment}"
+              deadline = time.time() + 600
+              while time.time() < deadline:
+                  try:
+                      payload = get_json(sts_url)
+                  except error.HTTPError as exc:
+                      if exc.code == 404:
+                          time.sleep(5)
+                          continue
+                      raise
+                  ready = int((payload.get("status") or {}).get("readyReplicas") or 0)
+                  if ready >= 1:
+                      break
+                  time.sleep(5)
+              else:
+                  raise SystemExit("StatefulSet did not become ready before legacy Deployment cleanup")
+
+              req = request.Request(dep_url, headers=headers, method="DELETE")
+              try:
+                  with request.urlopen(req, context=ctx, timeout=10):
+                      pass
+              except error.HTTPError as exc:
+                  if exc.code != 404:
+                      raise
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: STATEFULSET_NAME
+              value: {{ include "codex-lb.workloadName" . | quote }}
+            - name: LEGACY_DEPLOYMENT_NAME
+              value: {{ include "codex-lb.fullname" . | quote }}
+{{- end }}
