@@ -336,7 +336,7 @@ def get_settings() -> Settings:
 
 def _bridge_advertise_hostname_is_replica_specific(hostname: str, *, instance_id: str) -> bool:
     try:
-        parsed_ip = ip_address(hostname)
+        ip_address(hostname)
     except ValueError:
         return instance_id in hostname
-    return parsed_ip.is_loopback
+    return False
