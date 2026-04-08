@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
+import time
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import cast
@@ -13,9 +15,11 @@ from app.core.clients.http import get_http_client
 from app.core.clients.proxy import ProxyResponseError
 from app.core.config.settings import get_settings
 from app.core.crypto import get_or_create_key
-from app.core.errors import OpenAIErrorEnvelope, openai_error
+from app.core.errors import OpenAIErrorEnvelope, openai_error, response_failed_event
 from app.core.openai.requests import ResponsesRequest
 from app.core.utils.json_guards import is_json_mapping
+from app.core.utils.request_id import get_request_id
+from app.core.utils.sse import format_sse_event
 from app.modules.api_keys.service import ApiKeyUsageReservationData
 
 HTTP_BRIDGE_INTERNAL_FORWARD_PATH = "/internal/bridge/responses"
@@ -43,6 +47,20 @@ class HTTPBridgeForwardedRequest:
     context: HTTPBridgeForwardContext
 
 
+@dataclass(frozen=True, slots=True)
+class _OwnerForwardReceiveTimeout:
+    timeout_seconds: float
+    error_code: str
+    error_message: str
+
+
+class _OwnerForwardStreamTimeoutError(Exception):
+    def __init__(self, *, error_code: str, error_message: str) -> None:
+        super().__init__(error_message)
+        self.error_code = error_code
+        self.error_message = error_message
+
+
 class HTTPBridgeOwnerClient:
     async def stream_responses(
         self,
@@ -51,12 +69,17 @@ class HTTPBridgeOwnerClient:
         payload: ResponsesRequest,
         headers: Mapping[str, str],
         context: HTTPBridgeForwardContext,
+        request_started_at: float,
     ) -> AsyncIterator[str]:
+        settings = get_settings()
         async with get_http_client().session.post(
             f"{owner_endpoint}{HTTP_BRIDGE_INTERNAL_FORWARD_PATH}",
             json=payload.model_dump(mode="json", exclude_none=True),
             headers=build_owner_forward_headers(headers=headers, payload=payload, context=context),
-            timeout=_owner_forward_timeout(connect_timeout_seconds=get_settings().proxy_request_budget_seconds),
+            timeout=_owner_forward_timeout(
+                connect_timeout_seconds=settings.upstream_connect_timeout_seconds,
+                idle_timeout_seconds=settings.stream_idle_timeout_seconds,
+            ),
         ) as response:
             if response.status != 200:
                 payload_text = await response.text()
@@ -64,8 +87,23 @@ class HTTPBridgeOwnerClient:
                     response.status,
                     _owner_forward_error_payload(status_code=response.status, payload_text=payload_text),
                 )
-            async for event_block in _iter_sse_event_blocks(response):
-                yield event_block
+            try:
+                async for event_block in _iter_sse_event_blocks(
+                    response,
+                    request_started_at=request_started_at,
+                    proxy_request_budget_seconds=settings.proxy_request_budget_seconds,
+                    stream_idle_timeout_seconds=settings.stream_idle_timeout_seconds,
+                ):
+                    yield event_block
+            except _OwnerForwardStreamTimeoutError as exc:
+                yield format_sse_event(
+                    response_failed_event(
+                        exc.error_code,
+                        exc.error_message,
+                        response_id=get_request_id(),
+                    )
+                )
+                return
 
 
 def build_owner_forward_headers(
@@ -137,9 +175,12 @@ def parse_forwarded_request(
     return HTTPBridgeForwardedRequest(context=context), None
 
 
-def _owner_forward_timeout(*, connect_timeout_seconds: float) -> aiohttp.ClientTimeout:
-    # Owner-forwarded SSE must allow long quiet periods after connect just like the local bridge path.
-    return aiohttp.ClientTimeout(total=None, sock_connect=connect_timeout_seconds, sock_read=None)
+def _owner_forward_timeout(*, connect_timeout_seconds: float, idle_timeout_seconds: float) -> aiohttp.ClientTimeout:
+    return aiohttp.ClientTimeout(
+        total=None,
+        sock_connect=connect_timeout_seconds,
+        sock_read=max(0.001, idle_timeout_seconds),
+    )
 
 
 def _reservation_from_headers(headers: Mapping[str, str]) -> ApiKeyUsageReservationData | None:
@@ -183,6 +224,8 @@ def _bridge_forward_signature(*, payload: ResponsesRequest, context: HTTPBridgeF
             "1" if context.codex_session_affinity else "0",
             context.downstream_turn_state or "",
             context.reservation.reservation_id if context.reservation is not None else "",
+            context.reservation.key_id if context.reservation is not None else "",
+            context.reservation.model if context.reservation is not None else "",
             body_digest,
         )
     )
@@ -190,9 +233,30 @@ def _bridge_forward_signature(*, payload: ResponsesRequest, context: HTTPBridgeF
     return hmac.new(secret, signing_payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-async def _iter_sse_event_blocks(response: aiohttp.ClientResponse) -> AsyncIterator[str]:
+async def _iter_sse_event_blocks(
+    response: aiohttp.ClientResponse,
+    *,
+    request_started_at: float,
+    proxy_request_budget_seconds: float,
+    stream_idle_timeout_seconds: float,
+) -> AsyncIterator[str]:
     buffer = b""
-    async for chunk in response.content.iter_chunked(65536):
+    chunks = response.content.iter_chunked(65536)
+    while True:
+        receive_timeout = _owner_forward_receive_timeout(
+            request_started_at=request_started_at,
+            proxy_request_budget_seconds=proxy_request_budget_seconds,
+            stream_idle_timeout_seconds=stream_idle_timeout_seconds,
+        )
+        try:
+            chunk = await asyncio.wait_for(chunks.__anext__(), timeout=receive_timeout.timeout_seconds)
+        except StopAsyncIteration:
+            break
+        except asyncio.TimeoutError as exc:
+            raise _OwnerForwardStreamTimeoutError(
+                error_code=receive_timeout.error_code,
+                error_message=receive_timeout.error_message,
+            ) from exc
         if not chunk:
             continue
         buffer += chunk
@@ -203,6 +267,37 @@ async def _iter_sse_event_blocks(response: aiohttp.ClientResponse) -> AsyncItera
                 yield f"{text}\n\n"
     if buffer.strip():
         yield buffer.decode("utf-8")
+
+
+def _owner_forward_receive_timeout(
+    *,
+    request_started_at: float,
+    proxy_request_budget_seconds: float,
+    stream_idle_timeout_seconds: float,
+) -> _OwnerForwardReceiveTimeout:
+    idle_timeout_seconds = max(0.001, stream_idle_timeout_seconds)
+    remaining_budget = _remaining_budget_seconds(request_started_at + proxy_request_budget_seconds)
+    if remaining_budget <= 0:
+        return _OwnerForwardReceiveTimeout(
+            timeout_seconds=0.0,
+            error_code="upstream_request_timeout",
+            error_message="Proxy request budget exhausted",
+        )
+    if idle_timeout_seconds <= remaining_budget:
+        return _OwnerForwardReceiveTimeout(
+            timeout_seconds=idle_timeout_seconds,
+            error_code="stream_idle_timeout",
+            error_message="Upstream stream idle timeout",
+        )
+    return _OwnerForwardReceiveTimeout(
+        timeout_seconds=remaining_budget,
+        error_code="upstream_request_timeout",
+        error_message="Proxy request budget exhausted",
+    )
+
+
+def _remaining_budget_seconds(deadline: float) -> float:
+    return max(0.0, deadline - time.monotonic())
 
 
 def _owner_forward_error_payload(*, status_code: int, payload_text: str) -> OpenAIErrorEnvelope:

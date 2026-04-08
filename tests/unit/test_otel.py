@@ -298,6 +298,7 @@ async def test_lifespan_runs_normally_when_otel_is_disabled(monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_lifespan_marks_bridge_membership_stale_on_shutdown(monkeypatch: pytest.MonkeyPatch):
+    import app.core.startup as startup_module
     import app.main as main
 
     settings = Settings(
@@ -314,8 +315,14 @@ async def test_lifespan_marks_bridge_membership_stale_on_shutdown(monkeypatch: p
     sticky_scheduler = _DummyScheduler()
     close_http_client = AsyncMock()
     close_db = AsyncMock()
+    register = AsyncMock()
+
+    async def _register(instance_id: str, *, endpoint_base_url: str | None = None) -> None:
+        assert startup_module._startup_complete is True
+        await register(instance_id, endpoint_base_url=endpoint_base_url)
+
     ring_service = SimpleNamespace(
-        register=AsyncMock(),
+        register=AsyncMock(side_effect=_register),
         mark_stale=AsyncMock(),
         unregister=AsyncMock(),
         heartbeat=AsyncMock(),
@@ -348,7 +355,7 @@ async def test_lifespan_marks_bridge_membership_stale_on_shutdown(monkeypatch: p
     async with main.lifespan(main.app):
         pass
 
-    ring_service.register.assert_awaited_once_with("pod-a", endpoint_base_url=None)
+    register.assert_awaited_once_with("pod-a", endpoint_base_url=None)
     ring_service.mark_stale.assert_awaited_once_with(
         "pod-a",
         stale_threshold_seconds=RING_STALE_THRESHOLD_SECONDS,

@@ -394,6 +394,7 @@ class ProxyService:
                 api_key_reservation=api_key_reservation,
                 codex_session_affinity=codex_session_affinity,
                 downstream_turn_state=downstream_turn_state,
+                request_started_at=request_state.started_at,
             ):
                 yield line
             return
@@ -434,6 +435,7 @@ class ProxyService:
         api_key_reservation: ApiKeyUsageReservationData | None,
         codex_session_affinity: bool,
         downstream_turn_state: str | None,
+        request_started_at: float,
     ) -> AsyncIterator[str]:
         current_instance, _ = _normalized_http_bridge_instance_ring(get_settings())
         forward_context = HTTPBridgeForwardContext(
@@ -464,6 +466,7 @@ class ProxyService:
                 payload=payload,
                 headers=headers,
                 context=forward_context,
+                request_started_at=request_started_at,
             ):
                 yield event_block
         except ProxyResponseError:
