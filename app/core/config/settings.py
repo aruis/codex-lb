@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     http_responses_session_bridge_gateway_safe_mode: bool = False
     http_responses_session_bridge_instance_id: str = Field(default_factory=_default_http_bridge_instance_id)
     http_responses_session_bridge_instance_ring: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    http_responses_session_bridge_advertise_base_url: str | None = None
     sticky_session_cleanup_enabled: bool = True
     sticky_session_cleanup_interval_seconds: int = Field(default=300, gt=0)
     encryption_key_file: Path = DEFAULT_ENCRYPTION_KEY_FILE
@@ -258,6 +259,16 @@ class Settings(BaseSettings):
                         normalized.append(instance_id)
             return normalized
         raise TypeError("http_responses_session_bridge_instance_ring must be a list or comma-separated string")
+
+    @field_validator("http_responses_session_bridge_advertise_base_url", mode="before")
+    @classmethod
+    def _normalize_http_bridge_advertise_base_url(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip().rstrip("/")
+            return stripped or None
+        raise TypeError("http_responses_session_bridge_advertise_base_url must be a string")
 
     @field_validator("model_context_window_overrides", mode="before")
     @classmethod

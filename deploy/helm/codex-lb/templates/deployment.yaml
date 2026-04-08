@@ -1,7 +1,7 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
-  name: {{ include "codex-lb.fullname" . }}
+  name: {{ include "codex-lb.workloadName" . }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "codex-lb.labels" . | nindent 4 }}
@@ -10,19 +10,20 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
+  serviceName: {{ include "codex-lb.bridgeHeadlessServiceName" . }}
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+  podManagementPolicy: {{ .Values.podManagementPolicy }}
   revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   selector:
     matchLabels:
       {{- include "codex-lb.selectorLabels" . | nindent 6 }}
-  strategy:
+  updateStrategy:
     type: {{ .Values.updateStrategy.type }}
     {{- if eq .Values.updateStrategy.type "RollingUpdate" }}
     rollingUpdate:
-      maxSurge: {{ .Values.updateStrategy.rollingUpdate.maxSurge }}
-      maxUnavailable: {{ .Values.updateStrategy.rollingUpdate.maxUnavailable }}
+      partition: {{ .Values.updateStrategy.rollingUpdate.partition }}
     {{- end }}
   template:
     metadata:
@@ -216,6 +217,20 @@ spec:
                 secretKeyRef:
                   name: {{ include "codex-lb.databaseUrlSecretName" . }}
                   key: {{ .Values.auth.secretKeys.databaseUrl }}
+            {{- if .Values.config.sessionBridgeEnabled }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_INSTANCE_ID
+              value: "$(POD_NAME)"
+            - name: CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ADVERTISE_BASE_URL
+              value: {{ default (printf "http://$(POD_NAME).%s.$(POD_NAMESPACE).svc.%s:2455" (include "codex-lb.bridgeHeadlessServiceName" .) .Values.clusterDomain) .Values.config.sessionBridgeAdvertiseBaseUrl | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

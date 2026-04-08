@@ -92,6 +92,29 @@ if PROMETHEUS_AVAILABLE:
         "Total soft-affinity bridge sessions rebound locally on a non-owner instance",
         registry=REGISTRY,
     )
+    bridge_owner_forward_total = Counter(
+        "codex_lb_bridge_owner_forward_total",
+        "Total bridge owner forwards by outcome",
+        ["outcome"],
+        registry=REGISTRY,
+    )
+    bridge_owner_mismatch_total = Counter(
+        "codex_lb_bridge_owner_mismatch_total",
+        "Total bridge owner mismatches by key strength",
+        ["strength"],
+        registry=REGISTRY,
+    )
+    bridge_local_rebind_total = Counter(
+        "codex_lb_bridge_local_rebind_total",
+        "Total bridge local rebinds by reason",
+        ["reason"],
+        registry=REGISTRY,
+    )
+    bridge_forward_latency_seconds = Histogram(
+        "codex_lb_bridge_forward_latency_seconds",
+        "Bridge owner forward latency",
+        registry=REGISTRY,
+    )
 
     def make_scrape_registry() -> Any:
         if MULTIPROCESS_MODE:
@@ -122,6 +145,10 @@ else:
     bridge_instance_mismatch_total: Any = None
     bridge_prompt_cache_locality_miss_total: Any = None
     bridge_soft_local_rebind_total: Any = None
+    bridge_owner_forward_total: Any = None
+    bridge_owner_mismatch_total: Any = None
+    bridge_local_rebind_total: Any = None
+    bridge_forward_latency_seconds: Any = None
 
     def make_scrape_registry() -> Any:
         return None
@@ -137,6 +164,10 @@ __all__ = [
     "active_connections",
     "accounts_total",
     "bridge_instance_mismatch_total",
+    "bridge_forward_latency_seconds",
+    "bridge_local_rebind_total",
+    "bridge_owner_forward_total",
+    "bridge_owner_mismatch_total",
     "bridge_prompt_cache_locality_miss_total",
     "bridge_soft_local_rebind_total",
     "circuit_breaker_state",

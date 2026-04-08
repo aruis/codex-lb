@@ -24,6 +24,14 @@ spec:
             matchLabels:
               {{- toYaml .Values.networkPolicy.ingressNSMatchLabels | nindent 14 }}
     {{- end }}
+    # Allow internal bridge handoff and peer-to-peer health traffic between codex-lb pods
+    - ports:
+        - port: 2455
+          protocol: TCP
+      from:
+        - podSelector:
+            matchLabels:
+              {{- include "codex-lb.selectorLabels" . | nindent 14 }}
     # Allow metrics scraping from Prometheus
     - ports:
         - port: {{ .Values.metrics.port }}

@@ -160,3 +160,26 @@ async def test_heartbeat_updates_timestamp(ring_service: RingMembershipService) 
         updated_hb = member2.last_heartbeat_at
 
     assert updated_hb > initial_hb
+
+
+@pytest.mark.asyncio
+async def test_resolve_endpoint_returns_advertised_base_url(ring_service: RingMembershipService) -> None:
+    await ring_service.register("pod-endpoint", endpoint_base_url="http://10.0.0.12:8080")
+
+    endpoint = await ring_service.resolve_endpoint("pod-endpoint")
+
+    assert endpoint == "http://10.0.0.12:8080"
+
+
+@pytest.mark.asyncio
+async def test_resolve_endpoint_ignores_stale_member_metadata(ring_service: RingMembershipService) -> None:
+    await ring_service.register("pod-stale-endpoint", endpoint_base_url="http://10.0.0.14:8080")
+    await ring_service.mark_stale(
+        "pod-stale-endpoint",
+        stale_threshold_seconds=RING_STALE_THRESHOLD_SECONDS,
+        grace_seconds=0,
+    )
+
+    endpoint = await ring_service.resolve_endpoint("pod-stale-endpoint", stale_threshold_seconds=1)
+
+    assert endpoint is None

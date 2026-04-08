@@ -63,6 +63,7 @@ from app.modules.api_keys.service import (
 from app.modules.firewall.repository import FirewallRepository
 from app.modules.firewall.service import FirewallRepositoryPort, FirewallService
 from app.modules.proxy import service as proxy_service_module
+from app.modules.proxy.http_bridge_forwarding import parse_forwarded_request
 from app.modules.proxy.request_policy import (
     apply_api_key_enforcement,
     openai_invalid_payload_error,
@@ -108,6 +109,11 @@ usage_router = APIRouter(
 )
 transcribe_router = APIRouter(
     prefix="/backend-api",
+    tags=["proxy"],
+    dependencies=[Security(validate_proxy_api_key), Depends(set_openai_error_format)],
+)
+internal_router = APIRouter(
+    prefix="/internal/bridge",
     tags=["proxy"],
     dependencies=[Security(validate_proxy_api_key), Depends(set_openai_error_format)],
 )
@@ -217,6 +223,47 @@ async def v1_responses(
         codex_session_affinity=False,
         openai_cache_affinity=True,
         prefer_http_bridge=True,
+    )
+
+
+@internal_router.post(
+    "/responses",
+    include_in_schema=False,
+    responses={
+        200: {
+            "content": {
+                "text/event-stream": {
+                    "schema": {"type": "string"},
+                }
+            }
+        }
+    },
+)
+async def internal_bridge_responses(
+    request: Request,
+    payload: ResponsesRequest = Body(...),
+    context: ProxyContext = Depends(get_proxy_context),
+    api_key: ApiKeyData | None = Security(validate_proxy_api_key),
+) -> Response:
+    forwarded_request_context, internal_error = parse_forwarded_request(
+        request.headers,
+        current_instance=get_settings().http_responses_session_bridge_instance_id,
+    )
+    if internal_error is not None or forwarded_request_context is None:
+        assert internal_error is not None
+        return _logged_error_json_response(request, 400, internal_error)
+    return await _stream_responses(
+        request,
+        payload,
+        context,
+        api_key,
+        codex_session_affinity=forwarded_request_context.context.codex_session_affinity,
+        openai_cache_affinity=True,
+        prefer_http_bridge=True,
+        skip_limit_enforcement=True,
+        api_key_reservation_override=forwarded_request_context.context.reservation,
+        include_rate_limit_headers=False,
+        forwarded_request=True,
     )
 
 
@@ -690,16 +737,24 @@ async def _stream_responses(
     openai_cache_affinity: bool = False,
     suppress_text_done_events: bool = False,
     prefer_http_bridge: bool = False,
+    skip_limit_enforcement: bool = False,
+    api_key_reservation_override: ApiKeyUsageReservationData | None = None,
+    include_rate_limit_headers: bool = True,
+    forwarded_request: bool = False,
 ) -> Response:
     apply_api_key_enforcement(payload, api_key)
     validate_model_access(api_key, payload.model)
-    reservation = await _enforce_request_limits(
-        api_key,
-        request_model=payload.model,
-        request_service_tier=payload.service_tier,
+    reservation = (
+        api_key_reservation_override
+        if skip_limit_enforcement
+        else await _enforce_request_limits(
+            api_key,
+            request_model=payload.model,
+            request_service_tier=payload.service_tier,
+        )
     )
 
-    rate_limit_headers = await context.service.rate_limit_headers()
+    rate_limit_headers = await context.service.rate_limit_headers() if include_rate_limit_headers else {}
     bridge_active = prefer_http_bridge and proxy_service_module.get_settings().http_responses_session_bridge_enabled
     downstream_turn_state = (
         proxy_service_module.ensure_http_downstream_turn_state(request.headers) if bridge_active else None
@@ -721,6 +776,7 @@ async def _stream_responses(
             api_key_reservation=reservation,
             suppress_text_done_events=suppress_text_done_events,
             downstream_turn_state=downstream_turn_state,
+            forwarded_request=forwarded_request,
         )
     else:
         stream = context.service.stream_responses(

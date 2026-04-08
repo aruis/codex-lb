@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import anyio
 import pytest
 
+from app.core.clients.proxy import ProxyResponseError
 from app.core.clients.proxy_websocket import UpstreamResponsesWebSocket
 from app.db.models import AccountStatus
 from app.modules.proxy import service as proxy_service
@@ -168,6 +169,135 @@ async def test_get_or_create_http_bridge_session_replaces_live_session_when_acco
     assert service._http_bridge_sessions[key] is replacement_session
     assert stale_session.closed is True
     assert any(call.args == (stale_session,) for call in close_session.await_args_list)
+
+
+def test_http_bridge_session_key_infers_strength_from_affinity_kind() -> None:
+    assert proxy_service._HTTPBridgeSessionKey("turn_state_header", "turn", None).strength == "hard"
+    assert proxy_service._HTTPBridgeSessionKey("session_header", "session", None).strength == "hard"
+    assert proxy_service._HTTPBridgeSessionKey("prompt_cache", "cache", None).strength == "soft"
+    assert proxy_service._HTTPBridgeSessionKey("request", "request", None).strength == "soft"
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_http_bridge_session_returns_owner_forward_for_hard_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    key = proxy_service._HTTPBridgeSessionKey("turn_state_header", "http_turn_123", None)
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", AsyncMock())
+    monkeypatch.setattr(
+        proxy_service,
+        "get_settings",
+        lambda: SimpleNamespace(http_responses_session_bridge_enabled=True),
+    )
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-b"))
+    monkeypatch.setattr(
+        proxy_service,
+        "_active_http_bridge_instance_ring",
+        AsyncMock(return_value=("instance-a", ["instance-a", "instance-b"])),
+    )
+    service._ring_membership = cast(Any, SimpleNamespace(resolve_endpoint=AsyncMock(return_value="http://instance-b")))
+
+    resolved = await service._get_or_create_http_bridge_session(
+        key,
+        headers={"x-codex-turn-state": "http_turn_123"},
+        affinity=proxy_service._AffinityPolicy(key="http_turn_123"),
+        api_key=None,
+        request_model="gpt-5.4",
+        idle_ttl_seconds=120.0,
+        max_sessions=8,
+        allow_forward_to_owner=True,
+    )
+
+    assert isinstance(resolved, proxy_service._HTTPBridgeOwnerForward)
+    assert resolved.owner_instance == "instance-b"
+    assert resolved.owner_endpoint == "http://instance-b"
+    assert resolved.key == key
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_http_bridge_session_soft_mismatch_rebinds_locally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    key = proxy_service._HTTPBridgeSessionKey("prompt_cache", "cache-key", None)
+    created_session = proxy_service._HTTPBridgeSession(
+        key=key,
+        headers={},
+        affinity=proxy_service._AffinityPolicy(key="cache-key"),
+        request_model="gpt-5.4",
+        account=cast(Any, SimpleNamespace(id="acc-fresh", status=AccountStatus.ACTIVE)),
+        upstream=cast(UpstreamResponsesWebSocket, SimpleNamespace(close=AsyncMock())),
+        upstream_control=proxy_service._WebSocketUpstreamControl(),
+        pending_requests=deque(),
+        pending_lock=anyio.Lock(),
+        response_create_gate=asyncio.Semaphore(1),
+        queued_request_count=0,
+        last_used_at=2.0,
+        idle_ttl_seconds=120.0,
+    )
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", AsyncMock())
+    monkeypatch.setattr(service, "_create_http_bridge_session", AsyncMock(return_value=created_session))
+    monkeypatch.setattr(
+        proxy_service,
+        "get_settings",
+        lambda: SimpleNamespace(http_responses_session_bridge_enabled=True),
+    )
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-b"))
+    monkeypatch.setattr(
+        proxy_service,
+        "_active_http_bridge_instance_ring",
+        AsyncMock(return_value=("instance-a", ["instance-a", "instance-b"])),
+    )
+
+    resolved = await service._get_or_create_http_bridge_session(
+        key,
+        headers={},
+        affinity=proxy_service._AffinityPolicy(key="cache-key"),
+        api_key=None,
+        request_model="gpt-5.4",
+        idle_ttl_seconds=120.0,
+        max_sessions=8,
+        allow_forward_to_owner=True,
+    )
+
+    assert resolved is created_session
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_http_bridge_session_prevents_forward_loops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    key = proxy_service._HTTPBridgeSessionKey("turn_state_header", "http_turn_123", None)
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", AsyncMock())
+    monkeypatch.setattr(
+        proxy_service,
+        "get_settings",
+        lambda: SimpleNamespace(http_responses_session_bridge_enabled=True),
+    )
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-b"))
+    monkeypatch.setattr(
+        proxy_service,
+        "_active_http_bridge_instance_ring",
+        AsyncMock(return_value=("instance-a", ["instance-a", "instance-b"])),
+    )
+
+    with pytest.raises(ProxyResponseError) as exc_info:
+        await service._get_or_create_http_bridge_session(
+            key,
+            headers={"x-codex-turn-state": "http_turn_123"},
+            affinity=proxy_service._AffinityPolicy(key="http_turn_123"),
+            api_key=None,
+            request_model="gpt-5.4",
+            idle_ttl_seconds=120.0,
+            max_sessions=8,
+            allow_forward_to_owner=True,
+            forwarded_request=True,
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.payload["error"]["code"] == "bridge_forward_loop_prevented"
 
 
 @pytest.mark.asyncio

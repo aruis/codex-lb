@@ -22,6 +22,20 @@ Create a default fully qualified app name.
 {{- end }}
 
 {{/*
+Headless service name for per-pod bridge DNS.
+*/}}
+{{- define "codex-lb.bridgeHeadlessServiceName" -}}
+{{- printf "%s-bridge" (include "codex-lb.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Stable workload resource name. Separate from fullname to allow controller-kind migration without same-name conflicts.
+*/}}
+{{- define "codex-lb.workloadName" -}}
+{{- printf "%s-workload" (include "codex-lb.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
 Create chart name and version as used by the chart label.
 */}}
 {{- define "codex-lb.chart" -}}

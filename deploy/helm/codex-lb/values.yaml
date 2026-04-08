@@ -38,17 +38,17 @@ image:
   # @param image.pullSecrets Container image pull secrets
   pullSecrets: []
 
-# @section Deployment parameters
+# @section Workload parameters
 # @param replicaCount Number of replicas
 replicaCount: 2
+# @param podManagementPolicy StatefulSet pod management policy
+podManagementPolicy: Parallel
 updateStrategy:
-  # @param updateStrategy.type Rolling update strategy type
+  # @param updateStrategy.type StatefulSet update strategy type (RollingUpdate|OnDelete)
   type: RollingUpdate
   rollingUpdate:
-    # @param updateStrategy.rollingUpdate.maxSurge Max surge pods during update
-    maxSurge: 1
-    # @param updateStrategy.rollingUpdate.maxUnavailable Max unavailable pods during update
-    maxUnavailable: 0
+    # @param updateStrategy.rollingUpdate.partition RollingUpdate partition for StatefulSet updates
+    partition: 0
 # @param terminationGracePeriodSeconds Pod termination grace period seconds
 terminationGracePeriodSeconds: 60
 # @param preStopSleepSeconds Seconds to sleep in preStop lifecycle hook
@@ -160,6 +160,8 @@ config:
   sessionBridgeQueueLimit: 8
   # @param config.sessionBridgeInstanceRing Comma-separated pod hostnames for session routing
   sessionBridgeInstanceRing: ""
+  # @param config.sessionBridgeAdvertiseBaseUrl Optional explicit owner-handoff base URL. Empty = auto-advertise headless-service DNS for the current pod
+  sessionBridgeAdvertiseBaseUrl: ""
   # @param config.stickySessionCleanupEnabled Enable periodic cleanup of stale sticky sessions
   stickySessionCleanupEnabled: true
   # @param config.stickySessionCleanupIntervalSeconds Interval between sticky session cleanup runs
@@ -253,6 +255,7 @@ service:
   annotations: {}
 
 # @section Network parameters
+clusterDomain: cluster.local
 networkPolicy:
   # @param networkPolicy.enabled Enable NetworkPolicy with default-deny + whitelist
   enabled: false

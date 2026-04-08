@@ -102,6 +102,7 @@ async def lifespan(app: FastAPI):
     await get_rate_limit_headers_cache().invalidate()
     reload_additional_quota_registry()
     settings = get_settings()
+    bridge_endpoint_base_url = settings.http_responses_session_bridge_advertise_base_url
     if settings.otel_enabled:
         from app.core.tracing.otel import init_tracing
 
@@ -154,7 +155,7 @@ async def lifespan(app: FastAPI):
         while True:
             attempt += 1
             try:
-                await svc.register(iid)
+                await svc.register(iid, endpoint_base_url=bridge_endpoint_base_url)
                 logger.info("Registered in bridge ring", extra={"instance_id": iid, "attempt": attempt})
                 break
             except Exception:
@@ -164,7 +165,7 @@ async def lifespan(app: FastAPI):
         while True:
             await asyncio.sleep(RING_HEARTBEAT_INTERVAL_SECONDS)
             try:
-                await svc.heartbeat(iid)
+                await svc.heartbeat(iid, endpoint_base_url=bridge_endpoint_base_url)
             except Exception:
                 logger.warning("Ring heartbeat failed", exc_info=True)
 
@@ -172,7 +173,7 @@ async def lifespan(app: FastAPI):
         while True:
             await asyncio.sleep(RING_HEARTBEAT_INTERVAL_SECONDS)
             try:
-                await svc.heartbeat(iid)
+                await svc.heartbeat(iid, endpoint_base_url=bridge_endpoint_base_url)
             except Exception:
                 logger.warning("Ring heartbeat failed", exc_info=True)
 
@@ -182,7 +183,10 @@ async def lifespan(app: FastAPI):
     try:
         ring_service = RingMembershipService(SessionLocal)
         instance_id = settings.http_responses_session_bridge_instance_id
-        await asyncio.wait_for(ring_service.register(instance_id), timeout=5.0)
+        await asyncio.wait_for(
+            ring_service.register(instance_id, endpoint_base_url=bridge_endpoint_base_url),
+            timeout=5.0,
+        )
         logger.info("Registered in bridge ring", extra={"instance_id": instance_id})
         heartbeat_task = asyncio.create_task(_heartbeat_only(ring_service, instance_id))
     except Exception:
@@ -304,6 +308,7 @@ def create_app() -> FastAPI:
     add_exception_handlers(app)
 
     app.include_router(proxy_api.router)
+    app.include_router(proxy_api.internal_router)
     app.include_router(proxy_api.ws_router)
     app.include_router(proxy_api.v1_router)
     app.include_router(proxy_api.v1_ws_router)
