@@ -101,10 +101,6 @@ async def test_validate_proxy_websocket_request_returns_validated_api_key(monkey
 
 @pytest.mark.asyncio
 async def test_validate_internal_bridge_api_key_allows_auth_disabled_remote_request(monkeypatch):
-    async def pass_auth(authorization: str | None):
-        assert authorization is None
-        return None
-
     request = Request(
         {
             "type": "http",
@@ -114,6 +110,37 @@ async def test_validate_internal_bridge_api_key_allows_auth_disabled_remote_requ
             "client": ("10.0.0.12", 12345),
         }
     )
+
+    async def pass_auth(authorization: str | None, *, request: Request | None = None):
+        assert authorization is None
+        assert request is not None
+        return None
+
+    monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", pass_auth)
+
+    api_key, response = await proxy_api_module._validate_internal_bridge_api_key(request)
+
+    assert api_key is None
+    assert response is None
+
+
+@pytest.mark.asyncio
+async def test_validate_internal_bridge_api_key_preserves_local_request_exemption(monkeypatch):
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/internal/bridge/responses",
+            "headers": [],
+            "client": ("127.0.0.1", 12345),
+        }
+    )
+
+    async def pass_auth(authorization: str | None, *, request: Request | None = None):
+        assert authorization is None
+        assert request is not None
+        return None
+
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", pass_auth)
 
     api_key, response = await proxy_api_module._validate_internal_bridge_api_key(request)

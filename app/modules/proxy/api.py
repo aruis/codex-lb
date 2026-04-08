@@ -1118,7 +1118,10 @@ async def _validate_internal_bridge_api_key(
     request: Request,
 ) -> tuple[ApiKeyData | None, JSONResponse | None]:
     try:
-        api_key = await validate_proxy_api_key_authorization(request.headers.get("authorization"))
+        api_key = await validate_proxy_api_key_authorization(
+            request.headers.get("authorization"),
+            request=request,
+        )
     except ProxyAuthError as exc:
         return None, JSONResponse(
             status_code=exc.status_code,
