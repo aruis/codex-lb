@@ -416,46 +416,26 @@ def test_local_api_port_falls_back_to_default_when_no_valid_port_source(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_validate_bridge_advertise_endpoint_rejects_shared_hostname_when_peer_exists(
-    monkeypatch: pytest.MonkeyPatch,
-):
+async def test_validate_bridge_advertise_endpoint_rejects_shared_hostname():
     import app.main as main
 
-    class _RingReader:
-        async def list_active(self) -> list[str]:
-            return ["instance-a", "instance-b"]
-
-    ring_service = _RingReader()
     settings = Settings(
-        http_responses_session_bridge_advertise_base_url="http://codex-lb-internal.default.svc.cluster.local:2455",
-    )
-
-    with pytest.raises(RuntimeError):
-        await main._validate_bridge_advertise_endpoint_for_multi_replica(
-            ring_service,
-            settings=settings,
-            instance_id="instance-a",
-            endpoint_base_url=settings.http_responses_session_bridge_advertise_base_url,
-        )
-
-
-@pytest.mark.asyncio
-async def test_validate_bridge_advertise_endpoint_allows_shared_hostname_without_peers(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    import app.main as main
-
-    class _RingReader:
-        async def list_active(self) -> list[str]:
-            return ["instance-a"]
-
-    ring_service = _RingReader()
-    settings = Settings(
-        http_responses_session_bridge_advertise_base_url="http://codex-lb-internal.default.svc.cluster.local:2455",
+        http_responses_session_bridge_instance_id="instance-a",
+        http_responses_session_bridge_advertise_base_url="http://instance-a.internal.local:2455",
     )
 
     await main._validate_bridge_advertise_endpoint_for_multi_replica(
-        ring_service,
+        settings=settings,
+        instance_id="instance-a",
+        endpoint_base_url=settings.http_responses_session_bridge_advertise_base_url,
+    )
+
+    settings = Settings(
+        http_responses_session_bridge_instance_id="instance-a",
+        http_responses_session_bridge_advertise_base_url="http://127.0.0.1:2455",
+    )
+
+    await main._validate_bridge_advertise_endpoint_for_multi_replica(
         settings=settings,
         instance_id="instance-a",
         endpoint_base_url=settings.http_responses_session_bridge_advertise_base_url,

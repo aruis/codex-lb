@@ -309,18 +309,17 @@ class Settings(BaseSettings):
                 "http_responses_session_bridge_instance_ring"
             )
         advertise_base_url = self.http_responses_session_bridge_advertise_base_url
-        if advertise_base_url is not None and len(ring) > 1:
+        if advertise_base_url is not None:
             hostname = urlparse(advertise_base_url).hostname
             if hostname is None:
                 raise ValueError("http_responses_session_bridge_advertise_base_url must include a valid hostname")
-            try:
-                ip_address(hostname)
-            except ValueError:
-                if self.http_responses_session_bridge_instance_id not in hostname:
-                    raise ValueError(
-                        "http_responses_session_bridge_advertise_base_url must be replica-specific for "
-                        "multi-replica bridge routing"
-                    )
+            if not _bridge_advertise_hostname_is_replica_specific(
+                hostname,
+                instance_id=self.http_responses_session_bridge_instance_id,
+            ):
+                raise ValueError(
+                    "http_responses_session_bridge_advertise_base_url must be replica-specific for bridge routing"
+                )
         return self
 
     @model_validator(mode="after")
@@ -333,3 +332,11 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+def _bridge_advertise_hostname_is_replica_specific(hostname: str, *, instance_id: str) -> bool:
+    try:
+        parsed_ip = ip_address(hostname)
+    except ValueError:
+        return instance_id in hostname
+    return parsed_ip.is_loopback

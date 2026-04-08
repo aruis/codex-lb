@@ -49,9 +49,31 @@ def test_settings_rejects_shared_http_bridge_advertise_base_url_for_multi_replic
         Settings()
 
 
-def test_settings_allows_replica_specific_http_bridge_advertise_base_url_for_multi_replica(monkeypatch):
+def test_settings_rejects_shared_http_bridge_advertise_base_url_without_static_ring(monkeypatch):
     monkeypatch.setenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_INSTANCE_ID", "instance-a")
-    monkeypatch.setenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_INSTANCE_RING", "instance-a, instance-b")
+    monkeypatch.delenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_INSTANCE_RING", raising=False)
+    monkeypatch.setenv(
+        "CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ADVERTISE_BASE_URL",
+        "http://codex-lb-internal.default.svc.cluster.local:2455",
+    )
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_settings_rejects_non_loopback_ip_http_bridge_advertise_base_url(monkeypatch):
+    monkeypatch.setenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_INSTANCE_ID", "instance-a")
+    monkeypatch.setenv(
+        "CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ADVERTISE_BASE_URL",
+        "http://10.0.0.25:2455",
+    )
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_settings_allows_replica_specific_http_bridge_advertise_base_url(monkeypatch):
+    monkeypatch.setenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_INSTANCE_ID", "instance-a")
     monkeypatch.setenv(
         "CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ADVERTISE_BASE_URL",
         "http://instance-a.codex-lb-bridge.default.svc.cluster.local:2455",
@@ -61,3 +83,15 @@ def test_settings_allows_replica_specific_http_bridge_advertise_base_url_for_mul
 
     assert settings.http_responses_session_bridge_advertise_base_url is not None
     assert settings.http_responses_session_bridge_advertise_base_url.endswith(":2455")
+
+
+def test_settings_allows_loopback_http_bridge_advertise_base_url(monkeypatch):
+    monkeypatch.setenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_INSTANCE_ID", "instance-a")
+    monkeypatch.setenv(
+        "CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ADVERTISE_BASE_URL",
+        "http://127.0.0.1:2455",
+    )
+
+    settings = Settings()
+
+    assert settings.http_responses_session_bridge_advertise_base_url == "http://127.0.0.1:2455"
