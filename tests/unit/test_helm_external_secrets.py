@@ -274,3 +274,15 @@ def test_network_policy_does_not_allow_http_ingress_from_all_namespaces_by_defau
             1,
         )[0]
     )
+
+
+def test_network_policy_allows_internal_bridge_handoff_egress_between_pods() -> None:
+    rendered = _helm_template(
+        "-f",
+        str(_CHART_DIR / "values-prod.yaml"),
+        "--show-only",
+        "templates/networkpolicy.yaml",
+    )
+
+    assert "# Allow pod-to-pod bridge owner handoff egress" in rendered
+    assert "port: 2455" in rendered.split("# Allow pod-to-pod bridge owner handoff egress", 1)[1]

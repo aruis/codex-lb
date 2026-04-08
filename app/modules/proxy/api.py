@@ -247,11 +247,13 @@ async def internal_bridge_responses(
 ) -> Response:
     forwarded_request_context, internal_error = parse_forwarded_request(
         request.headers,
+        payload=payload,
         current_instance=get_settings().http_responses_session_bridge_instance_id,
     )
     if internal_error is not None or forwarded_request_context is None:
         assert internal_error is not None
         return _logged_error_json_response(request, 400, internal_error)
+    skip_limit_enforcement = api_key is None or forwarded_request_context.context.reservation is not None
     return await _stream_responses(
         request,
         payload,
@@ -260,7 +262,7 @@ async def internal_bridge_responses(
         codex_session_affinity=forwarded_request_context.context.codex_session_affinity,
         openai_cache_affinity=True,
         prefer_http_bridge=True,
-        skip_limit_enforcement=True,
+        skip_limit_enforcement=skip_limit_enforcement,
         api_key_reservation_override=forwarded_request_context.context.reservation,
         include_rate_limit_headers=False,
         forwarded_request=True,

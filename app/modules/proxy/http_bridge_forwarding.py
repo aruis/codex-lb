@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
@@ -9,6 +11,8 @@ import aiohttp
 
 from app.core.clients.http import get_http_client
 from app.core.clients.proxy import ProxyResponseError
+from app.core.config.settings import get_settings
+from app.core.crypto import get_or_create_key
 from app.core.errors import OpenAIErrorEnvelope, openai_error
 from app.core.openai.requests import ResponsesRequest
 from app.core.utils.json_guards import is_json_mapping
@@ -22,6 +26,7 @@ HTTP_BRIDGE_CODEX_AFFINITY_HEADER = "x-codex-bridge-codex-session-affinity"
 HTTP_BRIDGE_RESERVATION_ID_HEADER = "x-codex-bridge-reservation-id"
 HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER = "x-codex-bridge-reservation-key-id"
 HTTP_BRIDGE_RESERVATION_MODEL_HEADER = "x-codex-bridge-reservation-model"
+HTTP_BRIDGE_SIGNATURE_HEADER = "x-codex-bridge-signature"
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +55,12 @@ class HTTPBridgeOwnerClient:
         async with get_http_client().session.post(
             f"{owner_endpoint}{HTTP_BRIDGE_INTERNAL_FORWARD_PATH}",
             json=payload.model_dump(mode="json", exclude_none=True),
-            headers=build_owner_forward_headers(headers=headers, context=context),
+            headers=build_owner_forward_headers(headers=headers, payload=payload, context=context),
+            timeout=aiohttp.ClientTimeout(
+                total=get_settings().proxy_request_budget_seconds,
+                sock_connect=get_settings().proxy_request_budget_seconds,
+                sock_read=get_settings().proxy_request_budget_seconds,
+            ),
         ) as response:
             if response.status != 200:
                 payload_text = await response.text()
@@ -65,6 +75,7 @@ class HTTPBridgeOwnerClient:
 def build_owner_forward_headers(
     *,
     headers: Mapping[str, str],
+    payload: ResponsesRequest,
     context: HTTPBridgeForwardContext,
 ) -> dict[str, str]:
     forwarded = dict(headers)
@@ -80,12 +91,14 @@ def build_owner_forward_headers(
         forwarded[HTTP_BRIDGE_RESERVATION_ID_HEADER] = context.reservation.reservation_id
         forwarded[HTTP_BRIDGE_RESERVATION_KEY_ID_HEADER] = context.reservation.key_id
         forwarded[HTTP_BRIDGE_RESERVATION_MODEL_HEADER] = context.reservation.model
+    forwarded[HTTP_BRIDGE_SIGNATURE_HEADER] = _bridge_forward_signature(payload=payload, context=context)
     return forwarded
 
 
 def parse_forwarded_request(
     headers: Mapping[str, str],
     *,
+    payload: ResponsesRequest,
     current_instance: str,
 ) -> tuple[HTTPBridgeForwardedRequest | None, OpenAIErrorEnvelope | None]:
     if headers.get(HTTP_BRIDGE_FORWARDED_HEADER) != "1":
@@ -108,6 +121,14 @@ def parse_forwarded_request(
         downstream_turn_state=_optional_header(headers.get("x-codex-turn-state")),
         reservation=_reservation_from_headers(headers),
     )
+    signature = _optional_header(headers.get(HTTP_BRIDGE_SIGNATURE_HEADER))
+    expected_signature = _bridge_forward_signature(payload=payload, context=context)
+    if signature is None or not hmac.compare_digest(signature, expected_signature):
+        return None, openai_error(
+            "bridge_forward_invalid",
+            "Internal bridge forward signature is invalid",
+            error_type="invalid_request_error",
+        )
     return HTTPBridgeForwardedRequest(context=context), None
 
 
@@ -135,6 +156,28 @@ def _optional_header(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _bridge_forward_signature(*, payload: ResponsesRequest, context: HTTPBridgeForwardContext) -> str:
+    payload_json = json.dumps(
+        payload.model_dump(mode="json", exclude_none=True),
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    body_digest = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    signing_payload = "|".join(
+        (
+            context.origin_instance,
+            context.target_instance,
+            "1" if context.codex_session_affinity else "0",
+            context.downstream_turn_state or "",
+            context.reservation.reservation_id if context.reservation is not None else "",
+            body_digest,
+        )
+    )
+    secret = get_or_create_key(get_settings().encryption_key_file)
+    return hmac.new(secret, signing_payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 async def _iter_sse_event_blocks(response: aiohttp.ClientResponse) -> AsyncIterator[str]:

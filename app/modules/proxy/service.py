@@ -1789,22 +1789,60 @@ class ProxyService:
                                         ),
                                     )
                                 elif self._ring_membership is None:
+                                    _log_http_bridge_event(
+                                        "owner_mismatch_retry",
+                                        key,
+                                        account_id=None,
+                                        model=request_model,
+                                        detail=(
+                                            "expected_instance="
+                                            f"{owner_instance}, current_instance={current_instance}, "
+                                            "outcome=retry_no_ring"
+                                        ),
+                                        cache_key_family=key.affinity_kind,
+                                        model_class=_extract_model_class(request_model) if request_model else None,
+                                        owner_check_applied=True,
+                                    )
+                                    if PROMETHEUS_AVAILABLE and bridge_instance_mismatch_total is not None:
+                                        bridge_instance_mismatch_total.labels(outcome="retry").inc()
                                     owner_mismatch_error = ProxyResponseError(
-                                        503,
+                                        409,
                                         openai_error(
-                                            "bridge_owner_unreachable",
-                                            "HTTP bridge owner endpoint could not be resolved",
+                                            "bridge_instance_mismatch",
+                                            (
+                                                "HTTP bridge session is owned by a different instance; "
+                                                "retry to reach the correct replica"
+                                            ),
                                             error_type="server_error",
                                         ),
                                     )
                                 else:
                                     owner_endpoint = await self._ring_membership.resolve_endpoint(owner_instance)
                                     if owner_endpoint is None:
+                                        _log_http_bridge_event(
+                                            "owner_mismatch_retry",
+                                            key,
+                                            account_id=None,
+                                            model=request_model,
+                                            detail=(
+                                                "expected_instance="
+                                                f"{owner_instance}, current_instance={current_instance}, "
+                                                "outcome=retry_no_endpoint"
+                                            ),
+                                            cache_key_family=key.affinity_kind,
+                                            model_class=_extract_model_class(request_model) if request_model else None,
+                                            owner_check_applied=True,
+                                        )
+                                        if PROMETHEUS_AVAILABLE and bridge_instance_mismatch_total is not None:
+                                            bridge_instance_mismatch_total.labels(outcome="retry").inc()
                                         owner_mismatch_error = ProxyResponseError(
-                                            503,
+                                            409,
                                             openai_error(
-                                                "bridge_owner_unreachable",
-                                                "HTTP bridge owner endpoint could not be resolved",
+                                                "bridge_instance_mismatch",
+                                                (
+                                                    "HTTP bridge session is owned by a different instance; "
+                                                    "retry to reach the correct replica"
+                                                ),
                                                 error_type="server_error",
                                             ),
                                         )

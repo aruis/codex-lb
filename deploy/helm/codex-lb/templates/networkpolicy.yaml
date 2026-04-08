@@ -72,6 +72,14 @@ spec:
     - ports:
         - port: 443
           protocol: TCP
+    # Allow pod-to-pod bridge owner handoff egress
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "codex-lb.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 2455
+          protocol: TCP
     # OTLP gRPC tracing (port 4317)
     {{- if .Values.tracing.enabled }}
     - ports:

@@ -221,6 +221,38 @@ async def test_get_or_create_http_bridge_session_returns_owner_forward_for_hard_
 
 
 @pytest.mark.asyncio
+async def test_get_or_create_http_bridge_session_falls_back_to_retry_when_owner_endpoint_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    key = proxy_service._HTTPBridgeSessionKey("turn_state_header", "http_turn_123", None)
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", AsyncMock())
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_app_settings())
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-b"))
+    monkeypatch.setattr(
+        proxy_service,
+        "_active_http_bridge_instance_ring",
+        AsyncMock(return_value=("instance-a", ["instance-a", "instance-b"])),
+    )
+    service._ring_membership = cast(Any, SimpleNamespace(resolve_endpoint=AsyncMock(return_value=None)))
+
+    with pytest.raises(ProxyResponseError) as exc_info:
+        await service._get_or_create_http_bridge_session(
+            key,
+            headers={"x-codex-turn-state": "http_turn_123"},
+            affinity=proxy_service._AffinityPolicy(key="http_turn_123"),
+            api_key=None,
+            request_model="gpt-5.4",
+            idle_ttl_seconds=120.0,
+            max_sessions=8,
+            allow_forward_to_owner=True,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.payload["error"]["code"] == "bridge_instance_mismatch"
+
+
+@pytest.mark.asyncio
 async def test_get_or_create_http_bridge_session_soft_mismatch_rebinds_locally(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
