@@ -52,7 +52,7 @@ from app.modules.usage import api as usage_api
 from app.modules.usage.additional_quota_keys import reload_additional_quota_registry
 
 logger = logging.getLogger(__name__)
-MiddlewareFactory: TypeAlias = Callable[..., ASGIApp]
+MiddlewareFactory: TypeAlias = Callable[..., "ASGIApp"]
 
 
 class _MetricsServer(Protocol):
