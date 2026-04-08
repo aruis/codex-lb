@@ -115,7 +115,7 @@ transcribe_router = APIRouter(
 internal_router = APIRouter(
     prefix="/internal/bridge",
     tags=["proxy"],
-    dependencies=[Security(validate_proxy_api_key), Depends(set_openai_error_format)],
+    dependencies=[Depends(set_openai_error_format)],
 )
 
 _TRANSCRIPTION_MODEL = "gpt-4o-transcribe"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from importlib import import_module
 from pathlib import Path
@@ -53,7 +54,6 @@ from app.modules.usage import api as usage_api
 from app.modules.usage.additional_quota_keys import reload_additional_quota_registry
 
 logger = logging.getLogger(__name__)
-_APP_PORT = 2455
 
 
 class _MetricsServer(Protocol):
@@ -362,7 +362,7 @@ async def _wait_for_bridge_advertise_endpoint(
     *,
     connect_timeout_seconds: float,
 ) -> None:
-    probe_base_url = (bridge_endpoint_base_url or f"http://127.0.0.1:{_APP_PORT}").rstrip("/")
+    probe_base_url = (bridge_endpoint_base_url or f"http://127.0.0.1:{_local_api_port()}").rstrip("/")
     probe_url = f"{probe_base_url}/health/live"
     timeout = aiohttp.ClientTimeout(
         total=connect_timeout_seconds,
@@ -386,6 +386,17 @@ async def _wait_for_bridge_advertise_endpoint(
             )
         delay = min(0.5 * (2 ** min(attempt - 1, 4)), 5.0)
         await asyncio.sleep(delay)
+
+
+def _local_api_port() -> int:
+    raw = os.getenv("PORT", "2455").strip()
+    try:
+        port = int(raw)
+    except ValueError:
+        return 2455
+    if port <= 0:
+        return 2455
+    return port
 
 
 app = create_app()

@@ -378,3 +378,19 @@ def test_metrics_bind_failure_is_only_benign_in_multiprocess_mode(monkeypatch: p
     monkeypatch.setattr(main, "MULTIPROCESS_MODE", True)
     assert main._is_benign_metrics_bind_failure(SystemExit(1)) is True
     assert main._is_benign_metrics_bind_failure(OSError(errno.EADDRINUSE, "in use")) is True
+
+
+def test_local_api_port_uses_port_env(monkeypatch: pytest.MonkeyPatch):
+    import app.main as main
+
+    monkeypatch.setenv("PORT", "3765")
+
+    assert main._local_api_port() == 3765
+
+
+def test_local_api_port_falls_back_for_invalid_env(monkeypatch: pytest.MonkeyPatch):
+    import app.main as main
+
+    monkeypatch.setenv("PORT", "not-a-port")
+
+    assert main._local_api_port() == 2455
