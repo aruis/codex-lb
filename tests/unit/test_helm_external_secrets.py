@@ -94,6 +94,8 @@ def test_upgrade_renders_legacy_deployment_cleanup_hook_for_statefulset_migratio
     assert '"helm.sh/hook": post-upgrade' in rendered
     assert "LEGACY_DEPLOYMENT_NAME" in rendered
     assert "STATEFULSET_NAME" in rendered
+    assert 'desired = int(spec.get("replicas") or 1)' in rendered
+    assert "if ready >= desired:" in rendered
 
 
 def test_chart_managed_secret_keeps_pre_install_hook_path() -> None:

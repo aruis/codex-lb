@@ -4,10 +4,13 @@ import asyncio
 import logging
 import os
 import sys
+from collections.abc import Awaitable
 from contextlib import asynccontextmanager
 from importlib import import_module
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Protocol, cast
+from urllib.parse import urlparse
 
 import aiohttp
 from fastapi import FastAPI, HTTPException
@@ -61,6 +64,10 @@ class _MetricsServer(Protocol):
     should_exit: bool
 
     async def serve(self) -> None: ...
+
+
+class _RingMembershipReader(Protocol):
+    def list_active(self) -> Awaitable[list[str]]: ...
 
 
 def _is_benign_metrics_bind_failure(exc: BaseException) -> bool:
@@ -164,6 +171,12 @@ async def lifespan(app: FastAPI):
         await _wait_for_bridge_advertise_endpoint(
             bridge_endpoint_base_url,
             connect_timeout_seconds=settings.upstream_connect_timeout_seconds,
+        )
+        await _validate_bridge_advertise_endpoint_for_multi_replica(
+            svc,
+            settings=settings,
+            instance_id=iid,
+            endpoint_base_url=bridge_endpoint_base_url,
         )
         attempt = 0
         while True:
@@ -419,6 +432,32 @@ def _port_from_argv() -> int | None:
         if value.startswith("--port="):
             return _parse_port_value(value.split("=", 1)[1])
     return None
+
+
+async def _validate_bridge_advertise_endpoint_for_multi_replica(
+    svc: _RingMembershipReader,
+    *,
+    settings,
+    instance_id: str,
+    endpoint_base_url: str | None,
+) -> None:
+    if endpoint_base_url is None:
+        return
+    hostname = urlparse(endpoint_base_url).hostname
+    if hostname is None:
+        raise RuntimeError("http_responses_session_bridge_advertise_base_url must include a valid hostname")
+    try:
+        ip_address(hostname)
+        return
+    except ValueError:
+        pass
+    if instance_id in hostname:
+        return
+    active_members = await svc.list_active()
+    if any(member != instance_id for member in active_members):
+        raise RuntimeError(
+            "http_responses_session_bridge_advertise_base_url must be replica-specific for multi-replica bridge routing"
+        )
 
 
 app = create_app()

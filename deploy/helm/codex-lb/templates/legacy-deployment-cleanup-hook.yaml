@@ -114,12 +114,15 @@ spec:
                           time.sleep(5)
                           continue
                       raise
-                  ready = int((payload.get("status") or {}).get("readyReplicas") or 0)
-                  if ready >= 1:
+                  spec = payload.get("spec") or {}
+                  status = payload.get("status") or {}
+                  desired = int(spec.get("replicas") or 1)
+                  ready = int(status.get("readyReplicas") or 0)
+                  if ready >= desired:
                       break
                   time.sleep(5)
               else:
-                  raise SystemExit("StatefulSet did not become ready before legacy Deployment cleanup")
+                  raise SystemExit("StatefulSet did not reach desired ready replicas before legacy Deployment cleanup")
 
               req = request.Request(dep_url, headers=headers, method="DELETE")
               try:
