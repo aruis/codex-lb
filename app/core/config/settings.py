@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import socket
 from functools import lru_cache
-from ipaddress import ip_network
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -307,6 +308,19 @@ class Settings(BaseSettings):
                 "http_responses_session_bridge_instance_id must be explicitly present in "
                 "http_responses_session_bridge_instance_ring"
             )
+        advertise_base_url = self.http_responses_session_bridge_advertise_base_url
+        if advertise_base_url is not None and len(ring) > 1:
+            hostname = urlparse(advertise_base_url).hostname
+            if hostname is None:
+                raise ValueError("http_responses_session_bridge_advertise_base_url must include a valid hostname")
+            try:
+                ip_address(hostname)
+            except ValueError:
+                if self.http_responses_session_bridge_instance_id not in hostname:
+                    raise ValueError(
+                        "http_responses_session_bridge_advertise_base_url must be replica-specific for "
+                        "multi-replica bridge routing"
+                    )
         return self
 
     @model_validator(mode="after")

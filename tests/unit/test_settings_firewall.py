@@ -35,3 +35,29 @@ def test_settings_rejects_http_bridge_instance_id_missing_from_ring(monkeypatch)
 
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_settings_rejects_shared_http_bridge_advertise_base_url_for_multi_replica(monkeypatch):
+    monkeypatch.setenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_INSTANCE_ID", "instance-a")
+    monkeypatch.setenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_INSTANCE_RING", "instance-a, instance-b")
+    monkeypatch.setenv(
+        "CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ADVERTISE_BASE_URL",
+        "http://codex-lb-internal.default.svc.cluster.local:2455",
+    )
+
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_settings_allows_replica_specific_http_bridge_advertise_base_url_for_multi_replica(monkeypatch):
+    monkeypatch.setenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_INSTANCE_ID", "instance-a")
+    monkeypatch.setenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_INSTANCE_RING", "instance-a, instance-b")
+    monkeypatch.setenv(
+        "CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ADVERTISE_BASE_URL",
+        "http://instance-a.codex-lb-bridge.default.svc.cluster.local:2455",
+    )
+
+    settings = Settings()
+
+    assert settings.http_responses_session_bridge_advertise_base_url is not None
+    assert settings.http_responses_session_bridge_advertise_base_url.endswith(":2455")

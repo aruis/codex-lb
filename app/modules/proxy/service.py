@@ -277,22 +277,6 @@ class ProxyService:
     ) -> AsyncIterator[str]:
         dashboard_settings = await get_settings_cache().get()
         runtime_config = _http_bridge_runtime_config(dashboard_settings, get_settings())
-        if runtime_config.enabled:
-            import app.core.startup as startup_module
-
-            if startup_module._startup_complete and not startup_module._bridge_registration_complete:
-                registered = await startup_module.wait_for_bridge_registration(
-                    timeout_seconds=get_settings().upstream_connect_timeout_seconds,
-                )
-                if not registered:
-                    raise ProxyResponseError(
-                        503,
-                        openai_error(
-                            "bridge_owner_unreachable",
-                            "HTTP bridge registration is not ready",
-                            error_type="server_error",
-                        ),
-                    )
         if not runtime_config.enabled:
             async for line in self._stream_with_retry(
                 payload,
@@ -1724,6 +1708,21 @@ class ProxyService:
         forwarded_request: bool = False,
     ) -> "_HTTPBridgeSession | _HTTPBridgeOwnerForward":
         settings = get_settings()
+        if await _http_bridge_should_wait_for_registration(self, key, settings):
+            import app.core.startup as startup_module
+
+            registered = await startup_module.wait_for_bridge_registration(
+                timeout_seconds=settings.upstream_connect_timeout_seconds,
+            )
+            if not registered:
+                raise ProxyResponseError(
+                    503,
+                    openai_error(
+                        "bridge_owner_unreachable",
+                        "HTTP bridge registration is not ready",
+                        error_type="server_error",
+                    ),
+                )
         api_key_id = api_key.id if api_key is not None else None
         effective_idle_ttl_seconds = idle_ttl_seconds
         incoming_turn_state = _sticky_key_from_turn_state_header(headers)
@@ -5654,6 +5653,28 @@ def _make_http_bridge_session_key(
         api_key_id=api_key.id if api_key is not None else None,
         strength=strength,
     )
+
+
+async def _http_bridge_should_wait_for_registration(
+    self,
+    key: _HTTPBridgeSessionKey,
+    settings: Settings,
+) -> bool:
+    import app.core.startup as startup_module
+
+    if not startup_module._startup_complete or startup_module._bridge_registration_complete:
+        return False
+    if key.strength != "hard":
+        return False
+    if self._ring_membership is None:
+        return False
+    try:
+        active_members = await self._ring_membership.list_active()
+    except Exception:
+        logger.debug("Skipping bridge registration gate because active ring lookup failed", exc_info=True)
+        return False
+    current_instance = settings.http_responses_session_bridge_instance_id
+    return any(member != current_instance for member in active_members)
 
 
 def _forwarded_http_bridge_session_key(
