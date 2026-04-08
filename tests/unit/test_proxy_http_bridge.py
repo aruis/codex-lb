@@ -183,6 +183,13 @@ def test_http_bridge_session_key_infers_strength_from_affinity_kind() -> None:
     assert proxy_service._HTTPBridgeSessionKey("request", "request", None).strength == "soft"
 
 
+def test_http_bridge_owner_check_required_honors_gateway_safe_mode_for_prompt_cache() -> None:
+    key = proxy_service._HTTPBridgeSessionKey("prompt_cache", "cache", None)
+
+    assert proxy_service._http_bridge_owner_check_required(key, gateway_safe_mode=False) is True
+    assert proxy_service._http_bridge_owner_check_required(key, gateway_safe_mode=True) is False
+
+
 @pytest.mark.asyncio
 async def test_get_or_create_http_bridge_session_returns_owner_forward_for_hard_mismatch(
     monkeypatch: pytest.MonkeyPatch,
@@ -296,9 +303,42 @@ async def test_get_or_create_http_bridge_session_soft_mismatch_rebinds_locally(
         idle_ttl_seconds=120.0,
         max_sessions=8,
         allow_forward_to_owner=True,
+        gateway_safe_mode=True,
     )
 
     assert resolved is created_session
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_http_bridge_session_prompt_cache_mismatch_retries_when_gateway_safe_mode_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = proxy_service.ProxyService(cast(Any, nullcontext()))
+    key = proxy_service._HTTPBridgeSessionKey("prompt_cache", "cache-key", None)
+    monkeypatch.setattr(service, "_prune_http_bridge_sessions_locked", AsyncMock())
+    monkeypatch.setattr(proxy_service, "get_settings", lambda: _make_app_settings())
+    monkeypatch.setattr(proxy_service, "_http_bridge_owner_instance", AsyncMock(return_value="instance-b"))
+    monkeypatch.setattr(
+        proxy_service,
+        "_active_http_bridge_instance_ring",
+        AsyncMock(return_value=("instance-a", ["instance-a", "instance-b"])),
+    )
+
+    with pytest.raises(ProxyResponseError) as exc_info:
+        await service._get_or_create_http_bridge_session(
+            key,
+            headers={},
+            affinity=proxy_service._AffinityPolicy(key="cache-key"),
+            api_key=None,
+            request_model="gpt-5.4",
+            idle_ttl_seconds=120.0,
+            max_sessions=8,
+            allow_forward_to_owner=False,
+            gateway_safe_mode=False,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.payload["error"]["code"] == "bridge_instance_mismatch"
 
 
 @pytest.mark.asyncio

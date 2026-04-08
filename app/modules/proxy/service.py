@@ -5731,8 +5731,7 @@ def _http_bridge_owner_check_required(
     *,
     gateway_safe_mode: bool,
 ) -> bool:
-    del gateway_safe_mode
-    return key.strength == "hard"
+    return key.strength == "hard" or (key.affinity_kind == "prompt_cache" and not gateway_safe_mode)
 
 
 def _http_bridge_key_strength(key: _HTTPBridgeSessionKey) -> str:

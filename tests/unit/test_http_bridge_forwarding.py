@@ -15,6 +15,7 @@ from app.modules.proxy.http_bridge_forwarding import (
     HTTP_BRIDGE_SIGNATURE_HEADER,
     HTTP_BRIDGE_TARGET_INSTANCE_HEADER,
     HTTPBridgeForwardContext,
+    _owner_forward_timeout,
     build_owner_forward_headers,
     parse_forwarded_request,
 )
@@ -75,7 +76,8 @@ def test_parse_forwarded_request_rejects_missing_signature() -> None:
 
     assert forwarded is None
     assert error is not None
-    assert error["error"]["code"] == "bridge_forward_invalid"
+    assert error.status_code == 400
+    assert error.payload["error"]["code"] == "bridge_forward_invalid"
 
 
 def test_parse_forwarded_request_rejects_tampered_signature() -> None:
@@ -102,4 +104,35 @@ def test_parse_forwarded_request_rejects_tampered_signature() -> None:
 
     assert forwarded is None
     assert error is not None
-    assert error["error"]["code"] == "bridge_forward_invalid"
+    assert error.status_code == 400
+    assert error.payload["error"]["code"] == "bridge_forward_invalid"
+
+
+def test_parse_forwarded_request_rejects_wrong_target_as_server_error() -> None:
+    payload = _payload()
+    context = HTTPBridgeForwardContext(
+        origin_instance="instance-a",
+        target_instance="instance-b",
+        codex_session_affinity=False,
+        downstream_turn_state=None,
+    )
+    headers = build_owner_forward_headers(headers={}, payload=payload, context=context)
+
+    forwarded, error = parse_forwarded_request(
+        headers,
+        payload=payload,
+        current_instance="instance-c",
+    )
+
+    assert forwarded is None
+    assert error is not None
+    assert error.status_code == 503
+    assert error.payload["error"]["code"] == "bridge_owner_forward_failed"
+
+
+def test_owner_forward_timeout_only_bounds_connect_phase() -> None:
+    timeout = _owner_forward_timeout(connect_timeout_seconds=75.0)
+
+    assert timeout.total is None
+    assert timeout.sock_connect == pytest.approx(75.0)
+    assert timeout.sock_read is None

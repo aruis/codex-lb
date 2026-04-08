@@ -252,7 +252,7 @@ async def internal_bridge_responses(
     )
     if internal_error is not None or forwarded_request_context is None:
         assert internal_error is not None
-        return _logged_error_json_response(request, 400, internal_error)
+        return _logged_error_json_response(request, internal_error.status_code, internal_error.payload)
     skip_limit_enforcement = api_key is None or forwarded_request_context.context.reservation is not None
     return await _stream_responses(
         request,

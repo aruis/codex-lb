@@ -56,11 +56,7 @@ class HTTPBridgeOwnerClient:
             f"{owner_endpoint}{HTTP_BRIDGE_INTERNAL_FORWARD_PATH}",
             json=payload.model_dump(mode="json", exclude_none=True),
             headers=build_owner_forward_headers(headers=headers, payload=payload, context=context),
-            timeout=aiohttp.ClientTimeout(
-                total=get_settings().proxy_request_budget_seconds,
-                sock_connect=get_settings().proxy_request_budget_seconds,
-                sock_read=get_settings().proxy_request_budget_seconds,
-            ),
+            timeout=_owner_forward_timeout(connect_timeout_seconds=get_settings().proxy_request_budget_seconds),
         ) as response:
             if response.status != 200:
                 payload_text = await response.text()
@@ -100,19 +96,25 @@ def parse_forwarded_request(
     *,
     payload: ResponsesRequest,
     current_instance: str,
-) -> tuple[HTTPBridgeForwardedRequest | None, OpenAIErrorEnvelope | None]:
+) -> tuple[HTTPBridgeForwardedRequest | None, ProxyResponseError | None]:
     if headers.get(HTTP_BRIDGE_FORWARDED_HEADER) != "1":
-        return None, openai_error(
-            "bridge_forward_invalid",
-            "Internal bridge forward marker is required",
-            error_type="invalid_request_error",
+        return None, ProxyResponseError(
+            400,
+            openai_error(
+                "bridge_forward_invalid",
+                "Internal bridge forward marker is required",
+                error_type="invalid_request_error",
+            ),
         )
     target_instance = headers.get(HTTP_BRIDGE_TARGET_INSTANCE_HEADER, "").strip()
     if not target_instance or target_instance != current_instance:
-        return None, openai_error(
-            "bridge_forward_invalid",
-            "Internal bridge forward target does not match this instance",
-            error_type="invalid_request_error",
+        return None, ProxyResponseError(
+            503,
+            openai_error(
+                "bridge_owner_forward_failed",
+                "Internal bridge forward reached a non-target instance",
+                error_type="server_error",
+            ),
         )
     context = HTTPBridgeForwardContext(
         origin_instance=headers.get(HTTP_BRIDGE_ORIGIN_INSTANCE_HEADER, "").strip() or "unknown",
@@ -124,12 +126,20 @@ def parse_forwarded_request(
     signature = _optional_header(headers.get(HTTP_BRIDGE_SIGNATURE_HEADER))
     expected_signature = _bridge_forward_signature(payload=payload, context=context)
     if signature is None or not hmac.compare_digest(signature, expected_signature):
-        return None, openai_error(
-            "bridge_forward_invalid",
-            "Internal bridge forward signature is invalid",
-            error_type="invalid_request_error",
+        return None, ProxyResponseError(
+            400,
+            openai_error(
+                "bridge_forward_invalid",
+                "Internal bridge forward signature is invalid",
+                error_type="invalid_request_error",
+            ),
         )
     return HTTPBridgeForwardedRequest(context=context), None
+
+
+def _owner_forward_timeout(*, connect_timeout_seconds: float) -> aiohttp.ClientTimeout:
+    # Owner-forwarded SSE must allow long quiet periods after connect just like the local bridge path.
+    return aiohttp.ClientTimeout(total=None, sock_connect=connect_timeout_seconds, sock_read=None)
 
 
 def _reservation_from_headers(headers: Mapping[str, str]) -> ApiKeyUsageReservationData | None:
