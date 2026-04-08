@@ -244,6 +244,21 @@ def test_make_http_bridge_session_key_ignores_forwarded_affinity_headers_on_publ
     assert key.strength == "soft"
 
 
+def test_http_bridge_requires_cluster_registration_for_non_loopback_advertise_url() -> None:
+    settings = Settings(
+        http_responses_session_bridge_instance_id="instance-a",
+        http_responses_session_bridge_advertise_base_url="http://instance-a.codex-lb-bridge.default.svc.cluster.local:2455",
+    )
+
+    assert proxy_service._http_bridge_requires_cluster_registration(settings) is True
+
+
+def test_http_bridge_requires_cluster_registration_skips_loopback_single_replica() -> None:
+    settings = Settings(http_responses_session_bridge_advertise_base_url="http://127.0.0.1:2455")
+
+    assert proxy_service._http_bridge_requires_cluster_registration(settings) is False
+
+
 @pytest.mark.asyncio
 async def test_forward_http_bridge_request_to_owner_preserves_session_header_key(
     monkeypatch: pytest.MonkeyPatch,

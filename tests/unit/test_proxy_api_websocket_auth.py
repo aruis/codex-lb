@@ -101,6 +101,9 @@ async def test_validate_proxy_websocket_request_returns_validated_api_key(monkey
 
 @pytest.mark.asyncio
 async def test_validate_internal_bridge_api_key_allows_auth_disabled_remote_request(monkeypatch):
+    async def fake_settings():
+        return SimpleNamespace(api_key_auth_enabled=False)
+
     request = Request(
         {
             "type": "http",
@@ -116,6 +119,7 @@ async def test_validate_internal_bridge_api_key_allows_auth_disabled_remote_requ
         assert request is not None
         return None
 
+    monkeypatch.setattr(proxy_api_module, "get_settings_cache", lambda: SimpleNamespace(get=fake_settings))
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", pass_auth)
 
     api_key, response = await proxy_api_module._validate_internal_bridge_api_key(request)
@@ -126,6 +130,9 @@ async def test_validate_internal_bridge_api_key_allows_auth_disabled_remote_requ
 
 @pytest.mark.asyncio
 async def test_validate_internal_bridge_api_key_preserves_local_request_exemption(monkeypatch):
+    async def fake_settings():
+        return SimpleNamespace(api_key_auth_enabled=True)
+
     request = Request(
         {
             "type": "http",
@@ -141,6 +148,7 @@ async def test_validate_internal_bridge_api_key_preserves_local_request_exemptio
         assert request is not None
         return None
 
+    monkeypatch.setattr(proxy_api_module, "get_settings_cache", lambda: SimpleNamespace(get=fake_settings))
     monkeypatch.setattr(proxy_api_module, "validate_proxy_api_key_authorization", pass_auth)
 
     api_key, response = await proxy_api_module._validate_internal_bridge_api_key(request)

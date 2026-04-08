@@ -23,6 +23,7 @@ from app.core.auth.dependencies import (
 )
 from app.core.clients.proxy import ProxyResponseError
 from app.core.config.settings import get_settings
+from app.core.config.settings_cache import get_settings_cache
 from app.core.errors import OpenAIErrorEnvelope, openai_error
 from app.core.exceptions import ProxyAuthError, ProxyRateLimitError
 from app.core.middleware.api_firewall import _parse_trusted_proxy_networks, resolve_connection_client_ip
@@ -1117,6 +1118,9 @@ async def _validate_proxy_websocket_request(
 async def _validate_internal_bridge_api_key(
     request: Request,
 ) -> tuple[ApiKeyData | None, JSONResponse | None]:
+    dashboard_settings = await get_settings_cache().get()
+    if not dashboard_settings.api_key_auth_enabled:
+        return None, None
     try:
         api_key = await validate_proxy_api_key_authorization(
             request.headers.get("authorization"),

@@ -130,10 +130,7 @@ spec:
                       raise
                   spec = payload.get("spec") or {}
                   status = payload.get("status") or {}
-                  desired = max(
-                      int(spec.get("replicas") or 1),
-                      legacy_ready,
-                  )
+                  desired = int(spec.get("replicas") or int(os.environ.get("STATEFULSET_MIN_REPLICAS", "1")))
                   ready = int(status.get("readyReplicas") or 0)
                   if ready >= desired:
                       break
@@ -155,6 +152,8 @@ spec:
                   fieldPath: metadata.namespace
             - name: STATEFULSET_NAME
               value: {{ include "codex-lb.workloadName" . | quote }}
+            - name: STATEFULSET_MIN_REPLICAS
+              value: {{ ternary (.Values.autoscaling.minReplicas | toString) (.Values.replicaCount | toString) .Values.autoscaling.enabled | quote }}
             - name: LEGACY_DEPLOYMENT_NAME
               value: {{ include "codex-lb.fullname" . | quote }}
 {{- end }}
