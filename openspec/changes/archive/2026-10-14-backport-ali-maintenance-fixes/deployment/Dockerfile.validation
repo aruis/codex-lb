@@ -1,0 +1,10 @@
+FROM codex-lb:ali-validation-20261013-2
+USER root
+COPY --chown=app:app app/ /app/app/
+COPY PATCH_MANIFEST.json /app/PATCH_MANIFEST.json
+COPY tests/ /app/tests/
+COPY pyproject.toml /app/pyproject.toml
+RUN chmod -R a+rX /app/tests
+USER app
+ENV CODEX_LB_DATA_DIR=/tmp/ali-maintenance-validation
+CMD ["python", "-m", "pytest", "tests/unit/test_accounts_service_probe.py", "tests/integration/test_accounts_api_probe.py", "tests/unit/test_codex_upstream_paths.py", "tests/unit/test_shared_future_waiters.py", "tests/unit/test_sse.py", "tests/integration/test_usage_repository.py", "tests/integration/test_dashboard_overview.py", "tests/unit/test_dashboard_projection_history_cap.py", "tests/integration/test_repositories.py", "tests/unit/test_codex_alpha_search_route.py", "tests/unit/test_ali_verified_anchor_recovery.py", "tests/unit/test_defer_cancellation_shield_leak.py", "tests/unit/test_http_bridge_idle_leases.py", "tests/unit/test_db_session.py", "tests/unit/test_proxy_http_bridge.py", "tests/integration/test_http_responses_bridge.py", "-q", "-o", "cache_dir=/tmp/pytest-cache", "--deselect=tests/unit/test_proxy_http_bridge.py::test_http_bridge_rejected_dead_owner_recovery_code_is_not_emitted_from_app"]

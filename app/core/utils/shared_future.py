@@ -28,13 +28,16 @@ _WAITERS_ATTR = "_shared_future_fanout_waiters"
 
 
 def _fan_out(shared: "asyncio.Future[_T]", waiters: "set[asyncio.Future[_T]]") -> None:
+    cancelled = shared.cancelled()
+    # A timed-out waiter detaches before shared work completes. Consume the
+    # failure even if no waiter remains; late waiters can still read it.
+    exc = None if cancelled else shared.exception()
     for waiter in waiters:
         if waiter.done():
             continue
-        if shared.cancelled():
+        if cancelled:
             waiter.cancel()
             continue
-        exc = shared.exception()
         if exc is not None:
             waiter.set_exception(exc)
             # Consume eagerly: a waiter whose task was cancelled between this

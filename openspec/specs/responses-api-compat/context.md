@@ -263,3 +263,9 @@ For example, a complete transcript accepted by the existing history verifier can
 - Post-deploy: correlate retry-circuit `opened`, `half_open`, and `reset` events with bridge `pending` and `response_events_seen` diagnostics. An idle `pending=0` retirement must not precede an immediate two-failure cooldown.
 - Post-deploy: monitor `previous_response_not_found` on `/backend-api/codex/responses`; recurring spikes show repeated continuity failures, which may come from malformed client identifiers, server-side invalidation, or connection lifecycle. Clients should perform the documented full-context retry without `previous_response_id`. Investigate socket-lifecycle remediation only when a separate close-reason, reconnect, or transport diagnostic correlates with the failures.
 - Websocket/Codex CLI tier verification runbook: `openspec/specs/responses-api-compat/ops.md`
+
+## Ali stable control media-type compatibility
+
+The 2026-10-14 overlay adapts #2513 and its small header-replacement helper to stable source. Codex control calls preserve the first case-insensitive media-type spelling and position, remove duplicates, and forward the opaque body unchanged across direct and routed transports. A bodyless request without an inbound type omits the synthesized field; an untyped body retains the JSON default.
+
+For example, lowercase content-type: application/sdp on a realtime control request remains one lowercase field carrying application/sdp, with unchanged bytes. The patch does not enable unsupported image web search, change route aliases, or introduce newer native-transport behavior. Validation and rollback are in `openspec/changes/archive/2026-10-14-backport-ali-maintenance-fixes/verification.md`; see spec.md for the control contract.

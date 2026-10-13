@@ -31,3 +31,9 @@ See `openspec/specs/proxy-runtime-observability/spec.md` for normative requireme
   constant validation only. They intentionally avoid request-scoped overrides,
   runtime-derived effective timeout values, payloads, API keys, access tokens,
   raw affinity keys, account emails, and other high-cardinality identifiers.
+
+## Ali abandoned shared-wait cleanup
+
+The 2026-10-14 overlay backports #2427 at the shared-future fan-out boundary. Consuming its exception before visiting attached waiters handles the ordinary gap between a timeout and the next wait, complementing the earlier SSE-owned-task cleanup. Live and late waiters still receive the same exception; cancellation remains distinct from failure.
+
+For example, a timed-out keepalive consumer leaves no registered waiter and the source then ends with StopAsyncIteration. That ordinary end no longer creates an unhandled-task ERROR record. This does not suppress unrelated errors or convert failed model requests into successes. The regression and deployment evidence is in `openspec/changes/archive/2026-10-14-backport-ali-maintenance-fixes/verification.md`; see spec.md for the diagnostic contract.

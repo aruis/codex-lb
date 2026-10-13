@@ -65,3 +65,9 @@ usage_history(window='primary', account_id='acc_1', recorded_at='2026-03-08T11:0
 ```
 
 `latest_by_account("primary")` should return only the later row while still treating both rows as part of the same logical primary window.
+
+## Ali stable capped SQLite history
+
+The 2026-10-14 overlay adapts upstream #2484 using the existing composite indexes. Capped SQLite reads now honor the caller's per-account cutoff and older-tail limit, while uncapped snapshot-cache behavior stays intact. The stable dashboard keeps its 4320-row tail cap and configured smoothing floor; newer upstream 64-row defaults and response fields are not imported.
+
+For example, 10080 minute-spaced weekly samples with a 30-minute smoothing floor hydrate 4350 rows instead of 10080 while preserving the stable projection output. A dense smoothing window remains complete even above the tail cap; a zero or negative cap removes only the older tail. This reduces read/cache work, without deleting historical data or migrating the database. Evidence and operations are in `openspec/changes/archive/2026-10-14-backport-ali-maintenance-fixes/verification.md`; the contract is in spec.md.

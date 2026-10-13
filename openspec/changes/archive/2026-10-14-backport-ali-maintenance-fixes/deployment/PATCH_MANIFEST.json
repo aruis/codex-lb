@@ -1,0 +1,39 @@
+{
+  "patch_id": "ali-maintenance-20261014-1",
+  "base_version": "1.24.0",
+  "base_image": "codex-lb:1.24.0-ali-hotfix-20261013-2",
+  "base_image_id": "sha256:6b470fe442d484ef98a6c73b938a58c6ea6f2fe0f279d9f0b6f0e379c7031c67",
+  "upstream_prs": [
+    2496,
+    2513,
+    2427,
+    2484
+  ],
+  "inherited_files": {
+    "app/core/utils/sse.py": "4f82af93dc340ee1d559f620c407f0a180acc708d5931cc95bfe45a9365e4b2c",
+    "app/db/session.py": "c84dba03c8253a0917cdfce6b121b0e2c54efad41812c04369c5bf5cfc357c12",
+    "app/modules/proxy/_service/compact.py": "f7b0f4dead188cf736fa3f66015a5be332b95409dc146e166deb31de6e8d97ce",
+    "app/modules/proxy/_service/http_bridge/helpers.py": "5412597b7449eca676ede88d8ab5e25262080341c9690c53763c8bbaadb9def2",
+    "app/modules/proxy/_service/http_bridge/request_submit.py": "23275a324e0d92673fef6ec1cd42075e4a76fdf72d74f3908a0728792da748dc",
+    "app/modules/proxy/_service/http_bridge/streaming.py": "776028304eb9371f46cc3c01e2d20ff553150964d8bbc3af1cd69081497240ec",
+    "app/modules/proxy/_service/streaming/retry.py": "41ffba085aeba4e9db434c7a26702cf3b931905955da3c11cf52b8a8722a5e08"
+  },
+  "files": {
+    "app/core/utils/shared_future.py": {
+      "base_sha256": "4b7853fece4fff7de9ba37ba69954b5e81dd2e686e7dd71b4ac76e19d7b7a694",
+      "patch_sha256": "bdea6bb4b39eb3daf5ce2607d0b5d07a70757d43eab740f3379e0fe062812987"
+    },
+    "app/core/clients/proxy.py": {
+      "base_sha256": "e96458cb775a5cf6d83837070d955dbfcf4d066b9a1cf701d099dc73449dbdb1",
+      "patch_sha256": "006f71e4034fa71e0fdbd9c33560ff53477bde4ca8a93802dd549697103d5b90"
+    },
+    "app/modules/accounts/service.py": {
+      "base_sha256": "ebbce3eb642add4ebb85ae03703b451a2e3e8c6e985ff3ec0e7bd5dbc2ca347f",
+      "patch_sha256": "66041a99faa60a6a4221dca607dc655a64b361639a2c333f7b79439990d4b0fb"
+    },
+    "app/modules/usage/repository.py": {
+      "base_sha256": "e42d68b4a4e4021335531c3d25c0790fa70b541c694bc74688f1c6e0ddfcc682",
+      "patch_sha256": "55823bc62a1689c7a35542c82844da918a2f6201086007fbaa9b018ccb0e02a1"
+    }
+  }
+}

@@ -109,3 +109,9 @@ does not count as evidence that the account is healthy.
 
 - [#676 - initial bug report on `/wham/usage` vs. Settings UI divergence](https://github.com/Soju06/codex-lb/issues/676)
 - [#677 - dashboard per-account force-probe action](https://github.com/Soju06/codex-lb/issues/677)
+
+## Ali stable Force Probe compatibility
+
+The 2026-10-14 maintenance overlay adapts upstream #2496 to the stable probe body. It omits the obsolete output-token field so a usable account is not reported as HTTP 400 solely because upstream rejects that parameter. The probe still sends one tiny account-bound request and refreshes usage; it does not enable a new quota-reset or account-recovery policy.
+
+For example, Force Probe on the selected Pro account sends a single-dot instruction without max_output_tokens. A successful status can inform existing probe settlement, while an unrelated auth or network failure retains its original status. Validation and rollback are recorded in `openspec/changes/archive/2026-10-14-backport-ali-maintenance-fixes/verification.md`; see spec.md for the endpoint contract.
