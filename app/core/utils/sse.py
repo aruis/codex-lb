@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from app.core.errors import ResponseFailedEvent
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_dict
+from app.core.utils.shared_future import wait_on_shared_future
 
 type JsonPayload = Mapping[str, JsonValue] | ResponseFailedEvent
 
@@ -75,8 +76,8 @@ async def inject_sse_keepalives(
             if pending is None:
                 pending = asyncio.create_task(_next_chunk(iterator))
             try:
-                chunk = await asyncio.wait_for(
-                    asyncio.shield(pending),
+                chunk = await wait_on_shared_future(
+                    pending,
                     timeout=interval_seconds,
                 )
             except asyncio.TimeoutError:
@@ -90,8 +91,9 @@ async def inject_sse_keepalives(
             pending = None
             yield chunk
     finally:
-        if pending is not None and not pending.done():
-            pending.cancel()
+        if pending is not None:
+            if not pending.done():
+                pending.cancel()
             try:
                 await pending
             except BaseException:

@@ -3208,6 +3208,25 @@ class _HTTPBridgeStreamingMixin:
                 effective_payload.previous_response_id is not None
                 and _http_bridge_should_attempt_local_previous_response_recovery(exc)
             )
+            verified_stale_anchor_replay = (
+                should_attempt_previous_response_recovery
+                and request_state.fresh_upstream_request_is_retry_safe
+                and request_state.fresh_upstream_request_text is not None
+                and request_state.response_id is None
+                and request_state.response_event_count == 0
+                and not request_state.downstream_visible
+                and not request_state.upstream_model_output_seen
+                and request_state.replay_count == 0
+                and (
+                    request_state.previous_response_not_found_rewritten
+                    or request_state.upstream_error_code_override == "previous_response_not_found"
+                    or exc.payload["error"].get("code")
+                    in {
+                        "previous_response_not_found",
+                        "bridge_previous_response_not_found",
+                    }
+                )
+            )
             should_attempt_context_overflow_fresh_turn_recovery = (
                 is_context_overflow
                 and effective_payload.previous_response_id is not None
@@ -3275,6 +3294,57 @@ class _HTTPBridgeStreamingMixin:
                     error_message="Upstream websocket closed before response.completed",
                 )
                 raise
+            elif verified_stale_anchor_replay:
+                # The captured body was verified before trimming history. Do
+                # not manufacture a fresh request from a lone continuation.
+                assert request_state.fresh_upstream_request_text is not None
+                fresh_body = json.loads(request_state.fresh_upstream_request_text)
+                fresh_body.pop("type", None)
+                retry_payload = _http_bridge_payload_without_previous_response_id(
+                    ResponsesRequest.model_validate(fresh_body)
+                )
+                retry_preferred_account_id = session.account.id
+                if request_state.operation_registered:
+                    if (
+                        session.durable_session_id is None
+                        or session.durable_owner_epoch is None
+                        or request_state.operation_id is None
+                    ):
+                        raise ProxyResponseError(
+                            502,
+                            openai_error(
+                                "bridge_continuity_persistence_failed", "Recovery owner fence is unavailable."
+                            ),
+                        ) from exc
+                    reset_ok = await self._durable_bridge.reset_operation_event_spool(
+                        operation_id=request_state.operation_id,
+                        session_id=session.durable_session_id,
+                        instance_id=_service_get_settings().http_responses_session_bridge_instance_id,
+                        owner_epoch=session.durable_owner_epoch,
+                    )
+                    if not reset_ok:
+                        raise ProxyResponseError(
+                            502,
+                            openai_error("bridge_continuity_persistence_failed", "Recovery spool reset was refused."),
+                        ) from exc
+                _log_http_bridge_event(
+                    "previous_response_recover_verified_same_owner",
+                    bridge_session_key,
+                    account_id=session.account.id,
+                    model=retry_payload.model,
+                    detail="outcome=verified_full_history_replay",
+                    owner_check_applied=True,
+                )
+                await self._reset_http_bridge_session_after_local_terminal_error(
+                    session,
+                    error_code="stream_incomplete",
+                    error_message="Upstream websocket closed before response.completed",
+                )
+                recovery_path = "verified_stale_anchor_same_owner"
+                retry_previous_response_id = None
+                retry_request_stage = "stale_anchor_recover"
+                allow_previous_response_recovery_rebind = False
+                durable_lookup = None
             else:
                 if PROMETHEUS_AVAILABLE and bridge_durable_recover_total is not None:
                     bridge_durable_recover_total.labels(path="local_previous_response_error").inc()
@@ -3341,7 +3411,8 @@ class _HTTPBridgeStreamingMixin:
                             preferred_account_id=retry_preferred_account_id,
                             preferred_account_has_continuity_provenance=preferred_account_has_continuity_provenance,
                             fallback_on_preferred_account_unavailable=not (
-                                file_required_preferred_account and retry_preferred_account_id is not None
+                                (file_required_preferred_account or verified_stale_anchor_replay)
+                                and retry_preferred_account_id is not None
                             ),
                             request_usage_budget=estimate_api_key_request_usage(retry_payload),
                             request_deadline=request_deadline,
@@ -3434,7 +3505,7 @@ class _HTTPBridgeStreamingMixin:
                 # A recovery request is the one bounded server-side replay;
                 # prevent a second cooldown bypass if this fresh socket also
                 # fails before response.created.
-                if recovery_path == "local_previous_response_error":
+                if recovery_path in {"local_previous_response_error", "verified_stale_anchor_same_owner"}:
                     retry_request_state.replay_count = max(1, request_state.replay_count + 1)
                 # Keep the durable operation identity attached to the
                 # server-owned recovery attempt. Re-registering the same
@@ -3447,7 +3518,7 @@ class _HTTPBridgeStreamingMixin:
                 retry_request_state.operation_attempt_generation = request_state.operation_attempt_generation
                 retry_request_state.operation_persisted_response_id = request_state.operation_persisted_response_id
                 retry_request_state.operation_rebind_required = request_state.operation_rebind_required
-                if recovery_path == "local_previous_response_error":
+                if recovery_path in {"local_previous_response_error", "verified_stale_anchor_same_owner"}:
                     # The prior response.failed/error made the operation
                     # terminal. Re-enter record_operation so its owner fence
                     # atomically moves it back to submitted before send.

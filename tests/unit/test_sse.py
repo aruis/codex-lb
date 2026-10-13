@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 from collections.abc import AsyncIterator
 from typing import Any, cast
@@ -140,6 +141,38 @@ async def test_inject_sse_keepalives_cancels_idle_source_when_downstream_closes(
     await cast(Any, stream).aclose()
 
     assert source_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_fails", [False, True])
+async def test_inject_sse_keepalives_collects_finished_source_on_downstream_close(source_fails: bool):
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    errors: list[dict[str, Any]] = []
+    loop = asyncio.get_running_loop()
+    original_handler = loop.get_exception_handler()
+
+    async def source() -> AsyncIterator[str]:
+        await release.wait()
+        finished.set()
+        if source_fails:
+            raise RuntimeError("upstream terminated while downstream was closing")
+        return
+        yield ""  # pragma: no cover - represents an exhausted async generator
+
+    loop.set_exception_handler(lambda _loop, context: errors.append(context))
+    try:
+        stream = inject_sse_keepalives(source(), 0.01)
+        assert await anext(stream) == SSE_KEEPALIVE_FRAME
+        release.set()
+        await finished.wait()
+        await asyncio.sleep(0)
+        await cast(Any, stream).aclose()
+        gc.collect()
+        await asyncio.sleep(0)
+        assert errors == []
+    finally:
+        loop.set_exception_handler(original_handler)
 
 
 @pytest.mark.asyncio

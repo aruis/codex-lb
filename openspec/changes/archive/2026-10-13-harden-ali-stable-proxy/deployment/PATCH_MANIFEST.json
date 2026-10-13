@@ -1,0 +1,35 @@
+{
+  "base_version": "1.24.0",
+  "base_commit": "84fde5a1ed5e0d5a58ccb3ec4b82938b059bf8c5",
+  "patch_id": "ali-reliability-20261013-2",
+  "files": {
+    "app/core/utils/sse.py": {
+      "base_sha256": "b5911c9457d90e0d96d31b83b1b4415fb3d9fc9ac2d05ae5ca13c70eae01e92c",
+      "patch_sha256": "4f82af93dc340ee1d559f620c407f0a180acc708d5931cc95bfe45a9365e4b2c"
+    },
+    "app/db/session.py": {
+      "base_sha256": "23b0561057c0808495819535691a292c0bff408dbf332e65f4518456b546a62e",
+      "patch_sha256": "c84dba03c8253a0917cdfce6b121b0e2c54efad41812c04369c5bf5cfc357c12"
+    },
+    "app/modules/proxy/_service/compact.py": {
+      "base_sha256": "c4c5ab8c4b34eb15a20c816bb247af645af88a5a02f0cd9e292c880f99de373f",
+      "patch_sha256": "f7b0f4dead188cf736fa3f66015a5be332b95409dc146e166deb31de6e8d97ce"
+    },
+    "app/modules/proxy/_service/http_bridge/helpers.py": {
+      "base_sha256": "ebd5e222abdca7b809ae6b1833d7adf571f2a6c3519220665c9bb80463e1ac6b",
+      "patch_sha256": "5412597b7449eca676ede88d8ab5e25262080341c9690c53763c8bbaadb9def2"
+    },
+    "app/modules/proxy/_service/http_bridge/request_submit.py": {
+      "base_sha256": "709ee0944352ba9b9e03b6f48657679f5f98111a3d245cdac6105b917379f2f0",
+      "patch_sha256": "23275a324e0d92673fef6ec1cd42075e4a76fdf72d74f3908a0728792da748dc"
+    },
+    "app/modules/proxy/_service/http_bridge/streaming.py": {
+      "base_sha256": "36034656bf0867550c9a19ca9b78060b46c862db527daec3b2bb55f9a4acbbf2",
+      "patch_sha256": "776028304eb9371f46cc3c01e2d20ff553150964d8bbc3af1cd69081497240ec"
+    },
+    "app/modules/proxy/_service/streaming/retry.py": {
+      "base_sha256": "1514a40d04737bcb7504fa7622888a8df1b7b99580b0babbac7786210c524806",
+      "patch_sha256": "41ffba085aeba4e9db434c7a26702cf3b931905955da3c11cf52b8a8722a5e08"
+    }
+  }
+}

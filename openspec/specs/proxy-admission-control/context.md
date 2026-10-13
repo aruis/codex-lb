@@ -44,3 +44,9 @@ Symptom of undersizing: persistent `account_stream_cap` errors and "Waiting for 
 Operators can distinguish local account pressure through the stable `account_response_create_cap` and `account_stream_cap` reasons. The spillover behavior is zero-config because it mutates no ownership state; rollback restores conservative fail-closed selection without data conversion.
 
 Related capability: `openspec/specs/sticky-session-operations/`.
+
+## Ali v1.24.0 reliability overlay
+
+The 2026-10-13 ali overlay adapts upstream #1969 cancellation cleanup and #1972 admission fencing to the installed stable runtime. It uses shared-future waiters without repeatedly attaching shield callbacks, snapshots admission settings before taking the session pending lock, and counts admission waiters for idle retirement. SSE cleanup also collects an already-finished owned source task when downstream closes.
+
+For example, a slow dashboard settings read cannot monopolize the pending lock while another request releases capacity; an admitting session remains live until its waiter is settled. A client closing after a final SSE result cannot leave the source task's terminal exception uncollected. Validation and deployment evidence are in `openspec/changes/archive/2026-10-13-harden-ali-stable-proxy/verification.md`.

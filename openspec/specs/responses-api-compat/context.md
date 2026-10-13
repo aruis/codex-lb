@@ -246,6 +246,12 @@ OpenSpec change first.
 
 ## Operational Notes
 
+### Ali stable rejected-anchor recovery
+
+The 2026-10-13 stable overlay adds one narrowly gated HTTP-bridge recovery path. A definitive stale-anchor rejection may replay the captured verified complete history once on the same account, preserving the request deadline, admission/reservation lifecycle and durable operation owner fence. The path never treats a connection timeout, a history delta, visible output or a repeated replay as proof that a fresh request is safe.
+
+For example, a complete transcript accepted by the existing history verifier can retry without the rejected `previous_response_id`; a lone "continue" message must retain the continuity failure. This improves a known continuation failure without claiming to solve external proxy timeouts or unsupported image web search. Evidence and rollback details are in `openspec/changes/archive/2026-10-13-harden-ali-stable-proxy/verification.md`.
+
 - Pre-release: run unit/integration tests and optional OpenAI client compatibility tests.
 - Smoke tests: stream a response, validate non-stream responses, and verify error envelopes.
 - Post-deploy: monitor `no_accounts`, `upstream_unavailable`, compact retry attempts, and compact failure phases, especially on direct compact requests.
