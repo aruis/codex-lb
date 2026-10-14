@@ -388,6 +388,7 @@ from app.modules.proxy.helpers import (
     _normalize_error_code,
     classify_upstream_failure,
     is_upstream_model_capacity_error,
+    is_upstream_usage_limit_rejection,
 )
 from app.modules.proxy.http_bridge_forwarding import (
     HTTPBridgeForwardContext as HTTPBridgeForwardContext,
@@ -396,6 +397,7 @@ from app.modules.proxy.http_bridge_forwarding import (
     OwnerForwardRelayFailure as OwnerForwardRelayFailure,
 )
 from app.modules.proxy.load_balancer import AccountSelection
+from app.modules.usage.updater import UsageUpdater
 
 
 def _facade() -> Any:
@@ -419,10 +421,14 @@ def _resolve_upstream_stream_transport(upstream_stream_transport: str) -> str | 
     return upstream_stream_transport
 
 
-def _should_penalize_stream_error(code: str | None) -> bool:
+def _should_penalize_stream_error(code: str | None, message: str | None = None) -> bool:
     if code is None:
         return False
-    return code in _facade()._ACCOUNT_RECOVERY_RETRY_CODES or code in _facade()._TRANSIENT_RETRY_CODES
+    return (
+        code in _facade()._ACCOUNT_RECOVERY_RETRY_CODES
+        or code in _facade()._TRANSIENT_RETRY_CODES
+        or is_upstream_usage_limit_rejection(error_code=code, message=message)
+    )
 
 
 _MODEL_CAPACITY_LIMIT_CODES = {
@@ -867,6 +873,23 @@ def _is_account_neutral_request_rejection(
     return bool(_facade()._is_missing_tool_output_message(message))
 
 
+def _request_usage_refresh(proxy: Any, account_id: str) -> None:
+    """Schedule a tracked, coalesced usage refresh after a streamed ``usage_limit_reached``.
+
+    ``mark_rate_limit`` persists status only, while the pool-exhaustion
+    predicate also needs a >= 100 % usage row that would otherwise wait for
+    the next scheduler tick. The refresh runs on its own background session
+    and never touches this request's ``Account``.
+    """
+    schedule = getattr(proxy, "_schedule_cancel_safe_cleanup", None)
+    if schedule is None:
+        return
+    refresh = UsageUpdater.request_refresh(account_id)
+    if refresh is None:
+        return
+    schedule(refresh, action="request_usage_refresh", request_id=get_request_id() or "unknown")
+
+
 async def _handle_stream_error(
     proxy: Any,
     account: Account,
@@ -898,6 +921,8 @@ async def _handle_stream_error(
         return classified
     if classified["failure_class"] == "rate_limit":
         await proxy._load_balancer.mark_rate_limit(account, error)
+        if is_upstream_usage_limit_rejection(error_code=code, message=error.get("message")):
+            _request_usage_refresh(proxy, account.id)
     elif classified["failure_class"] == "quota":
         await proxy._load_balancer.mark_quota_exceeded(account, error)
     elif code in PERMANENT_FAILURE_CODES:
@@ -923,8 +948,20 @@ def _push_stream_attempt_timeout_overrides(
     )
 
 
-def _should_retry_stream_error(code: str) -> bool:
-    return code in _facade()._ACCOUNT_RECOVERY_RETRY_CODES
+def _should_retry_stream_error(code: str, message: str | None = None) -> bool:
+    """Whether a pre-visible terminal frame may be retried on a sibling account.
+
+    The code allowlist cannot answer this for the serialized form of the
+    usage-limit rejection: upstream sends that frame with no error code, which
+    normalizes to ``upstream_error`` and is in no transport retry list -- so a
+    frame saying the account is spent gets surfaced on the first account while
+    the identical HTTP body walks the pool. The frame's sentence is put through
+    the same predicate the health write beside it uses, because that sentence
+    is the only evidence a status-less, code-less frame carries.
+    """
+    return code in _facade()._ACCOUNT_RECOVERY_RETRY_CODES or is_upstream_usage_limit_rejection(
+        error_code=code, message=message
+    )
 
 
 def _upstream_turn_state_from_socket(upstream: UpstreamWebSocket | None) -> str | None:

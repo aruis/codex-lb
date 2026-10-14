@@ -1,0 +1,11 @@
+FROM codex-lb:ali-validation-20261013-2
+USER root
+COPY --chown=app:app app/ /app/app/
+COPY PATCH_MANIFEST.json /app/PATCH_MANIFEST.json
+COPY tests/ /app/tests/
+COPY docs/examples/codex/ /app/docs/examples/codex/
+COPY pyproject.toml /app/pyproject.toml
+RUN chmod -R a+rX /app/tests
+USER app
+ENV CODEX_LB_DATA_DIR=/tmp/ali-quota-validation
+CMD ["python", "-m", "pytest", "tests/unit/test_usage_refresh_scheduler_recovery.py", "tests/unit/test_failover_foundation.py", "tests/unit/test_graceful_shutdown.py", "tests/unit/test_usage_updater.py", "tests/unit/test_proxy_utils.py", "tests/integration/test_usage_refresh_scheduler_scope.py", "tests/integration/test_proxy_transient_retry.py", "tests/integration/test_proxy_websocket_responses.py", "tests/unit/test_ali_verified_anchor_recovery.py", "tests/unit/test_defer_cancellation_shield_leak.py", "tests/unit/test_shared_future_waiters.py", "tests/unit/test_accounts_service_probe.py", "tests/unit/test_codex_upstream_paths.py", "tests/integration/test_usage_repository.py", "tests/integration/test_http_responses_bridge.py", "-q", "-o", "cache_dir=/tmp/pytest-cache", "--timeout=180", "--timeout-method=thread"]

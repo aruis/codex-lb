@@ -1,0 +1,117 @@
+{
+  "patch_id": "ali-quota-recovery-20261014-2",
+  "base_version": "1.24.0",
+  "base_git_commit": "a24fa50b6eea343c2f399daff4351d801e7c562c",
+  "base_image": "codex-lb:1.24.0-ali-hotfix-20261014-1",
+  "base_image_id": "sha256:21f2ac230d32da720bc46acc9172235818bb4360ebb5971cb5cf835ea440d7de",
+  "upstream_prs": [
+    2449,
+    2405,
+    2255
+  ],
+  "minimal_dependency_prs": [
+    2125
+  ],
+  "files": {
+    "app/core/clients/proxy.py": {
+      "base_sha256": "006f71e4034fa71e0fdbd9c33560ff53477bde4ca8a93802dd549697103d5b90",
+      "patch_sha256": "006f71e4034fa71e0fdbd9c33560ff53477bde4ca8a93802dd549697103d5b90",
+      "changed_in_this_batch": false
+    },
+    "app/core/errors.py": {
+      "base_sha256": "b63780b183c860248a636e0498b7ea2350b0a352cbe1f6d4513832576217966b",
+      "patch_sha256": "111468fdfe5be89098e185c60c96039664a8d2d446b198cb6dd85241ae661f70",
+      "changed_in_this_batch": true
+    },
+    "app/core/middleware/inflight.py": {
+      "base_sha256": "1ceac8a3a43264f49b6e9d2acb31ee5baf8a7dee26919ad4a23a47b494b3b5bf",
+      "patch_sha256": "68acd677a9aabf81e40f4f7c26aa848e31f8ab42945d8859eb9db8e2e7c48601",
+      "changed_in_this_batch": true
+    },
+    "app/core/usage/refresh_scheduler.py": {
+      "base_sha256": "343d57a00f864ef86833eef575243b4fce752847211b9e49a605dd1db5fdc804",
+      "patch_sha256": "59d2768002a6c1f1c2599b9110ec637dc12148ff52795f3de2dd5ceb6061d9c7",
+      "changed_in_this_batch": true
+    },
+    "app/core/utils/shared_future.py": {
+      "base_sha256": "bdea6bb4b39eb3daf5ce2607d0b5d07a70757d43eab740f3379e0fe062812987",
+      "patch_sha256": "bdea6bb4b39eb3daf5ce2607d0b5d07a70757d43eab740f3379e0fe062812987",
+      "changed_in_this_batch": false
+    },
+    "app/core/utils/sse.py": {
+      "base_sha256": "4f82af93dc340ee1d559f620c407f0a180acc708d5931cc95bfe45a9365e4b2c",
+      "patch_sha256": "4f82af93dc340ee1d559f620c407f0a180acc708d5931cc95bfe45a9365e4b2c",
+      "changed_in_this_batch": false
+    },
+    "app/db/session.py": {
+      "base_sha256": "c84dba03c8253a0917cdfce6b121b0e2c54efad41812c04369c5bf5cfc357c12",
+      "patch_sha256": "c84dba03c8253a0917cdfce6b121b0e2c54efad41812c04369c5bf5cfc357c12",
+      "changed_in_this_batch": false
+    },
+    "app/modules/accounts/service.py": {
+      "base_sha256": "66041a99faa60a6a4221dca607dc655a64b361639a2c333f7b79439990d4b0fb",
+      "patch_sha256": "66041a99faa60a6a4221dca607dc655a64b361639a2c333f7b79439990d4b0fb",
+      "changed_in_this_batch": false
+    },
+    "app/modules/proxy/_service/compact.py": {
+      "base_sha256": "f7b0f4dead188cf736fa3f66015a5be332b95409dc146e166deb31de6e8d97ce",
+      "patch_sha256": "f7b0f4dead188cf736fa3f66015a5be332b95409dc146e166deb31de6e8d97ce",
+      "changed_in_this_batch": false
+    },
+    "app/modules/proxy/_service/http_bridge/helpers.py": {
+      "base_sha256": "5412597b7449eca676ede88d8ab5e25262080341c9690c53763c8bbaadb9def2",
+      "patch_sha256": "5412597b7449eca676ede88d8ab5e25262080341c9690c53763c8bbaadb9def2",
+      "changed_in_this_batch": false
+    },
+    "app/modules/proxy/_service/http_bridge/request_submit.py": {
+      "base_sha256": "23275a324e0d92673fef6ec1cd42075e4a76fdf72d74f3908a0728792da748dc",
+      "patch_sha256": "23275a324e0d92673fef6ec1cd42075e4a76fdf72d74f3908a0728792da748dc",
+      "changed_in_this_batch": false
+    },
+    "app/modules/proxy/_service/http_bridge/streaming.py": {
+      "base_sha256": "776028304eb9371f46cc3c01e2d20ff553150964d8bbc3af1cd69081497240ec",
+      "patch_sha256": "776028304eb9371f46cc3c01e2d20ff553150964d8bbc3af1cd69081497240ec",
+      "changed_in_this_batch": false
+    },
+    "app/modules/proxy/_service/streaming/helpers.py": {
+      "base_sha256": "d2bb9b6b8b564fd838343d9fbab3b3e1ede3a71faa88ffb7c9f8e162fb034dbc",
+      "patch_sha256": "2ab75cace99246adb2c07f048f42108422393cb728eb4c49f1deda723310db22",
+      "changed_in_this_batch": true
+    },
+    "app/modules/proxy/_service/streaming/mixin.py": {
+      "base_sha256": "c1afb639084934142e04ab478c62a8919a60e7d796c9600cfe4cc6f400801419",
+      "patch_sha256": "e08938aa5cb8c5762ed222b58d4e65e9948f58de830bbbb5a6eae8798c8557f5",
+      "changed_in_this_batch": true
+    },
+    "app/modules/proxy/_service/streaming/retry.py": {
+      "base_sha256": "41ffba085aeba4e9db434c7a26702cf3b931905955da3c11cf52b8a8722a5e08",
+      "patch_sha256": "c446440266923dcd98df4b13b699e3f2319c3ff0f931e5eccd62b6f835399aba",
+      "changed_in_this_batch": true
+    },
+    "app/modules/proxy/_service/websocket/helpers.py": {
+      "base_sha256": "97c598816bc5b82fe649bb9c16dd79db6a50272d34b05edbf9c931ccfc5a0f93",
+      "patch_sha256": "71a15df6d5b29fd02fc323b694b9935cb612f8d38ef0f9d9e8eb46f66e9dd941",
+      "changed_in_this_batch": true
+    },
+    "app/modules/proxy/_service/websocket/mixin.py": {
+      "base_sha256": "daec69a181acc8411956a34b8d873c1bcf859f7c70167806fb984cfe1214ea45",
+      "patch_sha256": "714e4a4cff6b99699c3a7a29e964faa17a019b56bd85f583a5db0cb22d70820e",
+      "changed_in_this_batch": true
+    },
+    "app/modules/proxy/helpers.py": {
+      "base_sha256": "a5523fcc4fdf3c980e4132e711bab5c80bb3ab77d7baddc292db5cbfeebda2e8",
+      "patch_sha256": "700c069ce6ec3a41e1b3bfb7f027a94437d68bd1ed6f41c83747cb3117912585",
+      "changed_in_this_batch": true
+    },
+    "app/modules/usage/repository.py": {
+      "base_sha256": "55823bc62a1689c7a35542c82844da918a2f6201086007fbaa9b018ccb0e02a1",
+      "patch_sha256": "55823bc62a1689c7a35542c82844da918a2f6201086007fbaa9b018ccb0e02a1",
+      "changed_in_this_batch": false
+    },
+    "app/modules/usage/updater.py": {
+      "base_sha256": "f0397af79f92bf2bf7670c7a9b81c1cb5e0dec5903e8117ab1c4157e44a78a4d",
+      "patch_sha256": "da6cd3ff376a191b64af829761c39301423456646596b5b8043d178683f45ea8",
+      "changed_in_this_batch": true
+    }
+  }
+}

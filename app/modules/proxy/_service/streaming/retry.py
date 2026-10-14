@@ -790,7 +790,7 @@ class _StreamingRetryMixin:
                     settlement.error_message = error_message
                     settlement.error = exc.error
                     settlement.account_health_error = (
-                        _facade()._should_penalize_stream_error(exc.code)
+                        _facade()._should_penalize_stream_error(exc.code, error_message)
                         or is_upstream_model_capacity_error(error_message)
                         or exc.account_health_error
                     )
@@ -2037,7 +2037,9 @@ class _StreamingRetryMixin:
                                     settlement.error = _upstream_error_from_openai(error)
                                 else:
                                     settlement.error = tex.error
-                                settlement.account_health_error = _facade()._should_penalize_stream_error(error_code)
+                                settlement.account_health_error = _facade()._should_penalize_stream_error(
+                                    error_code, error_message
+                                )
                                 try:
                                     yield format_sse_event(event)
                                 except (asyncio.CancelledError, GeneratorExit):
@@ -2381,7 +2383,9 @@ class _StreamingRetryMixin:
                     continue
                 except _TerminalStreamError as exc:
                     health_write_allowed = await _drain_pending_post_refresh_penalty_on_terminal(settlement)
-                    if health_write_allowed and _facade()._should_penalize_stream_error(exc.code):
+                    if health_write_allowed and _facade()._should_penalize_stream_error(
+                        exc.code, exc.error.get("message")
+                    ):
                         await proxy._handle_stream_error(account, exc.error, exc.code)
                     return
                 except ProxyResponseError as exc:
@@ -2690,7 +2694,9 @@ class _StreamingRetryMixin:
                                 settlement.error_code = error_code
                                 settlement.error_message = error_message
                                 settlement.error = _upstream_error_from_openai(error)
-                                settlement.account_health_error = _facade()._should_penalize_stream_error(error_code)
+                                settlement.account_health_error = _facade()._should_penalize_stream_error(
+                                    error_code, error_message
+                                )
                                 settled = await _settle_stream_usage_before_pending_penalty(settlement)
                                 if settled and settlement.account_health_error:
                                     await proxy._handle_stream_error(
@@ -2928,7 +2934,7 @@ class _StreamingRetryMixin:
                             require_security_work_authorized = True
                             continue
                     health_write_allowed = await _drain_pending_post_refresh_penalty_on_terminal(settlement)
-                    if health_write_allowed and _facade()._should_penalize_stream_error(error_code):
+                    if health_write_allowed and _facade()._should_penalize_stream_error(error_code, error_message):
                         await proxy._handle_stream_error(
                             account,
                             _upstream_error_from_openai(error),
