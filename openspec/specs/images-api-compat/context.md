@@ -93,3 +93,14 @@ keeps `requires_openai_auth = true` does not activate the actor-authorized path.
    `/backend-api/codex/images/generations` or
    `/backend-api/codex/images/edits`; codex-lb handles the request through the
    existing Images compatibility pipeline.
+
+## Internal host compatibility
+
+Images and default account probes share upstream #2320's selector: prefer visible,
+unsuppressed `gpt-5.6-luna`, then `gpt-5.5`; if neither qualifies use Luna and retain
+existing routing errors. Public image model names remain unchanged. Catalog
+visibility does not establish account entitlement and no retry is added.
+
+For example, Ali's 2026-10-21 Pro catalog advertises Luna and suppresses 5.5.
+The former fixed host caused local HTTP 503 `no_plan_support_for_model` before
+upstream image generation. The selector chooses Luna with no client changes.
